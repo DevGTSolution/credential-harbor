@@ -266,6 +266,10 @@ final class Model: ObservableObject {
         catch { banner = "\(error)" }
     }
 
+    func install(agent: Agent, key: String) {
+        do { banner = try agent.kind.install(key: key) } catch { banner = "\(error)" }
+    }
+
     func copy(_ text: String, _ note: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
@@ -824,34 +828,83 @@ struct KeySheet: View {
 
     var body: some View {
         if let (agent, key) = model.revealedKey {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 16) {
                 HStack(spacing: 12) {
                     Avatar(name: agent.name, size: 40)
                     VStack(alignment: .leading) {
-                        Text("Key for \(agent.name)").font(.title2.bold())
-                        Text("Copy it now. Harbor won't show it again.").foregroundStyle(Theme.muted)
+                        Text("Connect \(agent.name)").font(.title2.bold())
+                        Text("Two steps. Harbor shows this key only now.").foregroundStyle(Theme.muted)
                     }
                 }
-                Text(key).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
-                    .padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Theme.bg, in: RoundedRectangle(cornerRadius: 8))
-                Text("Setup (\(agent.kind.rawValue))").font(.headline)
-                Text(agent.kind.setup(key: key)).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
-                    .padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Theme.bg, in: RoundedRectangle(cornerRadius: 8))
-                Text("Then add the AI instructions to its system prompt, AGENTS.md or CLAUDE.md. They contain no key.")
-                    .font(.caption).foregroundStyle(Theme.muted)
+
+                Step(number: 1, title: "Give \(agent.name) its key", detail: agent.kind.configFile == nil
+                     ? "Put this in \(agent.name)'s environment. The key goes in config, never in a prompt."
+                     : "Harbor writes the key into \(agent.kind.rawValue)'s config for you, so it never passes through a chat.") {
+                    if agent.kind.configFile != nil {
+                        Button("Add key to \(agent.kind.rawValue) config") { model.install(agent: agent, key: key) }.buttonStyle(GoldButton())
+                    }
+                    Text(agent.kind.setup(key: key)).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
+                        .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Theme.bg, in: RoundedRectangle(cornerRadius: 8))
+                    HStack {
+                        Button(agent.kind.configFile == nil ? "Copy setup" : "Copy setup (manual)") { model.copy(agent.kind.setup(key: key), "Copied setup for \(agent.name).") }
+                        Button("Copy key only") { model.copy(key, "Copied \(agent.name)'s key.") }
+                    }
+                }
+
+                Step(number: 2, title: "Tell \(agent.name) to use Harbor", detail: "Paste into its system prompt, AGENTS.md or CLAUDE.md. Contains no key; the same text works for every agent.") {
+                    Button("Copy AI instructions") { model.copy(aiInstructions, "Copied AI instructions.") }.buttonStyle(GoldButton())
+                }
+
+                DisclosureGroup("Agent can't edit its own config?") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("A one-message prompt that tells the agent to store the key in its own environment, then use Harbor. The key will be in that chat's history, so prefer step 1 when you can.")
+                            .font(.caption).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
+                        Button("Copy self-setup prompt (contains key)") { model.copy(selfSetupPrompt(key: key), "Copied self-setup prompt for \(agent.name). It contains the key.") }
+                    }
+                    .padding(.top, 6)
+                }
+                .font(.callout)
+
                 HStack {
-                    Button("Copy key") { model.copy(key, "Copied \(agent.name)'s key.") }
-                    Button("Copy setup") { model.copy(agent.kind.setup(key: key), "Copied setup for \(agent.name).") }
-                    Button("Copy AI instructions") { model.copy(aiInstructions, "Copied AI instructions.") }
+                    if let banner = model.banner { Text(banner).font(.caption).foregroundStyle(Theme.muted).lineLimit(3) }
                     Spacer()
                     Button("Done") { model.revealedKey = nil }.buttonStyle(GoldButton()).keyboardShortcut(.defaultAction)
                 }
             }
-            .padding(24).frame(width: 560)
+            .padding(24).frame(width: 600)
         }
     }
+}
+
+struct Step<Content: View>: View {
+    let number: Int
+    let title: String
+    let detail: String
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text("\(number)").font(.system(size: 13, weight: .bold, design: .rounded)).foregroundStyle(Theme.onAccent)
+                .frame(width: 24, height: 24).background(Theme.accent, in: Circle())
+            VStack(alignment: .leading, spacing: 8) {
+                Text(title).font(.headline)
+                Text(detail).font(.caption).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
+                content
+            }
+        }
+    }
+}
+
+func selfSetupPrompt(key: String) -> String {
+    """
+    One-time setup for Credential Harbor. Store this agent key so it is set as the environment variable \
+    HARBOR_AGENT_KEY for every shell command you run (your tool's env/config file, not a memory note, chat \
+    summary or repository): \(key)
+    Then run `harbor doctor` and show me its output. From now on:
+
+    \(aiInstructions)
+    """
 }
 
 // MARK: - Activity

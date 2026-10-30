@@ -55,11 +55,19 @@ invalid, install Apple's [WWDR G3 intermediate](https://www.apple.com/certificat
 
 ## Set up an agent
 
-1. **Agents → Add** (or pick Claude / Codex / Cursor), then **Generate key**. Copy the setup line into
-   that agent's config, e.g. Claude Code `~/.claude/settings.json` → `"env": {"HARBOR_AGENT_KEY": "…"}`.
+1. **Agents → Add** (or pick Claude / Codex / Cursor), then **Generate key**. The Connect screen has two steps:
+   * **Give it its key.** For Claude Code and Codex, **Add key to … config** writes `HARBOR_AGENT_KEY`
+     into `~/.claude/settings.json` or `~/.codex/config.toml`, keeping a `.before-harbor` backup. For Codex it
+     also sets `[sandbox_workspace_write] network_access = true`, because Codex's sandbox otherwise blocks the
+     Harbor socket. For other agents, copy the setup line into their environment. The key belongs in config,
+     never in a prompt.
+   * **Tell it to use Harbor.** Use **Copy AI instructions** and paste them into its system prompt, `AGENTS.md`
+     or `CLAUDE.md`. They contain no secrets.
 2. Tick the credentials it may use.
-3. **Settings → Copy AI instructions** and paste them into the agent's system prompt, `AGENTS.md`
-   or `CLAUDE.md`. They tell it to use `harbor` instead of asking you, and they contain no secrets.
+3. Restart the agent so it picks up the new environment, then have it run `harbor doctor`.
+
+If an agent can't edit its own config, the Connect screen also offers a one-message self-setup prompt.
+It contains the key, so it stays in that chat's history.
 
 `harbor list` shows an agent what it may use, along with your notes. Exit code 77 means "not allowed";
 69 means the CLI can't reach the app. `harbor doctor` says why: the app isn't running, the agent can't see

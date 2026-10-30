@@ -10,12 +10,48 @@ enum AgentKind: String, Codable, CaseIterable, Identifiable {
     func setup(key: String) -> String {
         switch self {
         case .claude: return "Add to ~/.claude/settings.json:\n  \"env\": { \"HARBOR_AGENT_KEY\": \"\(key)\" }"
-        case .codex: return "Add to ~/.codex/config.toml:\n  [shell_environment_policy]\n  set = { HARBOR_AGENT_KEY = \"\(key)\" }"
+        case .codex: return "Add to ~/.codex/config.toml (under an existing [shell_environment_policy.set] if you have one):\n  [shell_environment_policy.set]\n  HARBOR_AGENT_KEY = \"\(key)\"\n\n  [sandbox_workspace_write]\n  network_access = true   # lets sandboxed commands reach Harbor"
         case .cursor: return "Add to the shell profile Cursor's agent uses (e.g. ~/.zshrc):\n  export HARBOR_AGENT_KEY=\(key)"
         case .hermes: return "Add to the Hermes .env (as the hermes user):\n  HARBOR_AGENT_KEY=\(key)\nand put /Users/Shared/CredentialHarbor/bin on its PATH."
         case .other: return "Set in that agent's environment or .env:\n  HARBOR_AGENT_KEY=\(key)"
         }
     }
+
+    /// The config file Harbor can write the key into for you, if this kind has one.
+    var configFile: URL? {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        switch self {
+        case .claude: return home.appendingPathComponent(".claude/settings.json")
+        case .codex: return home.appendingPathComponent(".codex/config.toml")
+        default: return nil
+        }
+    }
+
+    /// Writes the key (and, for Codex, socket access for its sandbox) into the agent's config.
+    /// Keeps a one-time backup next to the file. Returns a sentence describing the change.
+    func install(key: String) throws -> String {
+        guard let file = configFile else { throw HarborError.usage("\(rawValue) has no config Harbor can edit; use Copy setup.") }
+        let original = try? Data(contentsOf: file)
+        let updated: Data
+        switch self {
+        case .codex:
+            var text = original.map { String(decoding: $0, as: UTF8.self) } ?? ""
+            text = try ConfigPatch.toml(text, table: "shell_environment_policy.set", key: "HARBOR_AGENT_KEY", value: "\"\(key)\"")
+            text = try ConfigPatch.toml(text, table: "sandbox_workspace_write", key: "network_access", value: "true")
+            updated = Data(text.utf8)
+        default:
+            updated = try ConfigPatch.jsonEnv(original, key: "HARBOR_AGENT_KEY", value: key)
+        }
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let backup = file.appendingPathExtension("before-harbor")
+        if let original, !FileManager.default.fileExists(atPath: backup.path) { try original.write(to: backup) }
+        try updated.write(to: file) // in place, not atomic rename: keeps the file's inode for anything watching it
+        let path = file.path.replacingOccurrences(of: FileManager.default.homeDirectoryForCurrentUser.path, with: "~")
+        return self == .codex
+            ? "Added the key to \(path) and let Codex's sandbox reach Harbor (network_access). Quit and reopen Codex."
+            : "Added the key to \(path). Restart \(rawValue) sessions."
+    }
+
 }
 
 struct Agent: Codable, Identifiable, Hashable {
