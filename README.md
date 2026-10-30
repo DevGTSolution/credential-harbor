@@ -64,7 +64,7 @@ invalid, install Apple's [WWDR G3 intermediate](https://www.apple.com/certificat
    * **Tell it to use Harbor.** Use **Copy AI instructions** and paste them into its system prompt, `AGENTS.md`
      or `CLAUDE.md`. They contain no secrets.
 2. Tick the credentials it may use.
-   * **Desktop apps you can't give a key to**: use **Linked app** instead. Harbor asks macOS for the PID on
+   * **Tools you can't give a key to**: use **Linked apps** instead: an app (e.g. Cursor.app) or the folder a CLI agent runs from (e.g. `~/.local/share/cursor-agent`), several per agent. Harbor asks macOS for the PID on
      the other end of the socket and walks up its parent processes. Any `harbor` call launched by that app
      counts as the agent, with no key needed. The caller can't set that chain, unlike an environment variable.
 3. Restart the agent so it picks up the new environment, then have it run `harbor doctor`.

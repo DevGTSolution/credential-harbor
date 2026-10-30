@@ -273,14 +273,31 @@ final class Model: ObservableObject {
     func linkApp(_ id: UUID) {
         let panel = NSOpenPanel()
         panel.directoryURL = URL(fileURLWithPath: "/Applications")
-        panel.allowedContentTypes = [.applicationBundle]
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.showsHiddenFiles = true // CLI agents live in dot folders, e.g. ~/.local/share/cursor-agent
+        panel.allowedContentTypes = [.applicationBundle, .folder]
+        panel.message = "Choose an app, or the folder a command-line agent runs from."
         panel.prompt = "Link"
-        guard panel.runModal() == .OK, let app = panel.url?.resolvingSymlinksInPath().path else { return }
-        if let other = config.agents.first(where: { $0.linkedApp == app && $0.id != id }) {
-            banner = "\(URL(fileURLWithPath: app).lastPathComponent) is already linked to \(other.name)."; return
+        guard panel.runModal() == .OK, let path = panel.url?.resolvingSymlinksInPath().path else { return }
+        let name = URL(fileURLWithPath: path).lastPathComponent
+        if let other = config.agents.first(where: { $0.links.contains(path) && $0.id != id }) {
+            banner = "\(name) is already linked to \(other.name)."; return
         }
-        update { cfg in if let i = cfg.agents.firstIndex(where: { $0.id == id }) { cfg.agents[i].linkedApp = app } }
-        banner = "Linked \(URL(fileURLWithPath: app).lastPathComponent). Its harbor calls now count as \(agent(id)?.name ?? "this agent")."
+        update { cfg in
+            guard let i = cfg.agents.firstIndex(where: { $0.id == id }) else { return }
+            var links = cfg.agents[i].links
+            if !links.contains(path) { links.append(path) }
+            cfg.agents[i].linkedApps = links; cfg.agents[i].linkedApp = nil
+        }
+        banner = "Linked \(name). harbor calls launched from it now count as \(agent(id)?.name ?? "this agent")."
+    }
+
+    func unlink(_ id: UUID, _ path: String) {
+        update { cfg in
+            guard let i = cfg.agents.firstIndex(where: { $0.id == id }) else { return }
+            cfg.agents[i].linkedApps = cfg.agents[i].links.filter { $0 != path }; cfg.agents[i].linkedApp = nil
+        }
     }
 
     func scanKeychain() {
@@ -828,16 +845,26 @@ struct AgentDetail: View {
                     }
                 }
 
-                Card(title: "Linked app", subtitle: "For apps Harbor can't give a key to (e.g. Grok Bot). harbor calls from anything this app launches count as \(agent.name), no key needed. Harbor checks this with macOS, so the caller can't fake it.") {
-                    HStack(spacing: 10) {
-                        Image(systemName: agent.linkedApp == nil ? "app.dashed" : "app.badge.checkmark.fill")
-                            .foregroundStyle(agent.linkedApp == nil ? Theme.muted : Theme.good)
-                        Text(agent.linkedApp.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "No app linked")
-                        Spacer()
-                        if agent.linkedApp != nil { Button("Unlink") { model.update { cfg in
-                            if let i = cfg.agents.firstIndex(where: { $0.id == agentID }) { cfg.agents[i].linkedApp = nil } } } }
-                        Button(agent.linkedApp == nil ? "Choose app…" : "Change…") { model.linkApp(agentID) }.buttonStyle(GoldButton())
+                Card(title: "Linked apps", subtitle: "For tools Harbor can't give a key to (e.g. Grok Bot, Cursor). harbor calls launched from a linked app or folder count as \(agent.name), no key needed. Harbor checks this with macOS, so the caller can't fake it.") {
+                    if agent.links.isEmpty {
+                        HStack(spacing: 10) {
+                            Image(systemName: "app.dashed").foregroundStyle(Theme.muted)
+                            Text("Nothing linked").foregroundStyle(Theme.muted)
+                        }
                     }
+                    ForEach(agent.links, id: \.self) { link in
+                        HStack(spacing: 10) {
+                            Image(systemName: link.hasSuffix(".app") ? "app.badge.checkmark.fill" : "folder.fill.badge.gearshape")
+                                .foregroundStyle(Theme.good)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(URL(fileURLWithPath: link).lastPathComponent)
+                                Text(link.replacingOccurrences(of: NSHomeDirectory(), with: "~")).font(.caption2).foregroundStyle(Theme.muted)
+                            }
+                            Spacer()
+                            Button("Unlink") { model.unlink(agentID, link) }
+                        }
+                    }
+                    HStack { Spacer(); Button("Link app or folder…") { model.linkApp(agentID) }.buttonStyle(GoldButton()) }
                 }
 
                 Card(title: "Credentials it can use", subtitle: model.approved.isEmpty ? "No credentials approved yet. Add them under Credentials." : nil) {

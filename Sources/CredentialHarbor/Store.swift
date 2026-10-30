@@ -63,9 +63,12 @@ struct Agent: Codable, Identifiable, Hashable {
     var allowed: Set<String> = []
     var paused = false
     var lastUsed: Date?
-    /// e.g. /Applications/Grok Bot.app: harbor calls from anything that app launched count as this
-    /// agent, no key needed. For apps whose environment Harbor can't set.
+    /// Apps or folders (e.g. /Applications/Grok Bot.app, ~/.local/share/cursor-agent): harbor calls from
+    /// anything launched from inside them count as this agent, no key needed. For tools whose
+    /// environment Harbor can't set. `linkedApp` is the single link from 1.2 configs.
     var linkedApp: String?
+    var linkedApps: [String]?
+    var links: [String] { (linkedApps ?? []) + [linkedApp].compactMap { $0 } }
 }
 
 struct Health: Codable, Hashable {
@@ -219,7 +222,7 @@ final class Store: @unchecked Sendable {
             }
             agent = keyed
         } else if let linked = snapshot.agents.first(where: { agent in
-            agent.linkedApp.map { app in chain.contains { $0.hasPrefix(app + "/") } } ?? false
+            agent.links.contains { link in chain.contains { $0.hasPrefix(link + "/") } }
         }) {
             agent = linked
         } else {
