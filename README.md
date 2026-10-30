@@ -88,6 +88,28 @@ prefix_rule(pattern=["harbor", "run", ["--stdin", "--askpass"], "AI-Server", "--
 
 Never add a bare `["harbor"]` rule: `harbor run` can wrap any command.
 
+## Agents in Docker containers
+
+macOS sockets don't reach into Docker's Linux VM, so turn on **Settings → Containers**. Harbor then also
+listens on `127.0.0.1:47821`, which Docker Desktop exposes to containers as `host.docker.internal:47821`
+(other machines can't connect). Inside the container, use `harbor-container`, a dependency-free Python 3
+version of the CLI with the same commands:
+
+```yaml
+# docker-compose.yml (excerpt)
+services:
+  agent:
+    volumes: ["/Users/Shared/CredentialHarbor/bin:/opt/harbor:ro"]
+    environment: ["HARBOR_AGENT_KEY=${HARBOR_AGENT_KEY}"]   # from .env, never in the image
+```
+
+```sh
+python3 /opt/harbor/harbor-container doctor
+python3 /opt/harbor/harbor-container run --stdin AI-Server -- ssh server.local 'sudo -S -p "" uptime'
+```
+
+Container callers always need a key: Harbor can't see their process tree.
+
 ## Security model: read this
 
 Credential Harbor keeps secrets out of model context and out of logs. It is **not** a sandbox.

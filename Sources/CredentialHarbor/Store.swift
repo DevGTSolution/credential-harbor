@@ -94,6 +94,7 @@ struct Settings: Codable, Hashable {
     var notify = NotifyLevel.denied
     var retentionDays = 30
     var theme = ThemeName.harbor
+    var allowTCP = false
 
     init() {}
     /// Tolerates configs written by older versions (missing keys keep their defaults).
@@ -103,6 +104,7 @@ struct Settings: Codable, Hashable {
         notify = try c.decodeIfPresent(NotifyLevel.self, forKey: .notify) ?? .denied
         retentionDays = try c.decodeIfPresent(Int.self, forKey: .retentionDays) ?? 30
         theme = (try? c.decodeIfPresent(ThemeName.self, forKey: .theme)) ?? .harbor
+        allowTCP = try c.decodeIfPresent(Bool.self, forKey: .allowTCP) ?? false
     }
 }
 
@@ -306,6 +308,11 @@ final class Store: @unchecked Sendable {
     }
 
     private static func peerUser(_ fd: Int32) -> String {
+        var local = sockaddr()
+        var size = socklen_t(MemoryLayout<sockaddr>.size)
+        if getsockname(fd, &local, &size) == 0, local.sa_family == sa_family_t(AF_INET) {
+            return "container" // via Docker's proxy; the OS user on the Mac side is meaningless
+        }
         var uid = uid_t(), gid = gid_t()
         guard getpeereid(fd, &uid, &gid) == 0, let pw = getpwuid(uid) else { return "?" }
         return String(cString: pw.pointee.pw_name)
@@ -340,22 +347,52 @@ enum Broker {
         let bound = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) } }
         guard fd >= 0, bound == 0, listen(fd, 32) == 0 else { throw HarborError.usage("Could not open \(Wire.socketPath): \(String(cString: strerror(errno)))") }
         chmod(Wire.socketPath, 0o666)
+        acceptForever(fd)
+    }
+
+    private static func acceptForever(_ fd: Int32) {
         Thread {
             while true {
                 let client = accept(fd, nil, nil)
-                guard client >= 0 else { continue }
+                if client < 0 { if errno == EBADF || errno == EINVAL { return }; continue } // listener closed
                 DispatchQueue.global().async { Store.shared.serve(client); close(client) }
             }
         }.start()
     }
 
-    /// Keeps the shared CLI in step with the app version.
+    private static var tcpListener: Int32 = -1
+
+    /// 127.0.0.1 only. Docker Desktop forwards host.docker.internal to the Mac's loopback, so
+    /// containers reach it while the LAN can't. TCP callers have no process ancestry: key required.
+    @MainActor static func setTCP(_ on: Bool) {
+        if !on { if tcpListener >= 0 { close(tcpListener); tcpListener = -1 }; return }
+        guard tcpListener < 0 else { return }
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        var yes: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = Wire.tcpPort.bigEndian
+        address.sin_addr.s_addr = inet_addr("127.0.0.1")
+        let bound = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+        guard fd >= 0, bound == 0, listen(fd, 32) == 0 else { if fd >= 0 { close(fd) }; return }
+        tcpListener = fd
+        acceptForever(fd)
+    }
+
+    /// Keeps the shared CLIs in step with the app version: the macOS `harbor` and the
+    /// Python `harbor-container` for Linux containers.
     static func installCLI() {
-        guard let bundled = Bundle.main.url(forAuxiliaryExecutable: "harbor") else { return }
-        let target = URL(fileURLWithPath: Wire.cliPath)
-        if FileManager.default.contentsEqual(atPath: bundled.path, andPath: target.path) { return }
-        try? FileManager.default.removeItem(at: target)
-        try? FileManager.default.copyItem(at: bundled, to: target)
-        chmod(target.path, 0o755)
+        let bin = URL(fileURLWithPath: Wire.cliPath).deletingLastPathComponent()
+        for (bundled, name) in [(Bundle.main.url(forAuxiliaryExecutable: "harbor"), "harbor"),
+                                (Bundle.main.url(forResource: "harbor-container", withExtension: nil), "harbor-container")] {
+            guard let bundled else { continue }
+            let target = bin.appendingPathComponent(name)
+            if FileManager.default.contentsEqual(atPath: bundled.path, andPath: target.path) { continue }
+            try? FileManager.default.removeItem(at: target)
+            try? FileManager.default.copyItem(at: bundled, to: target)
+            chmod(target.path, 0o755)
+        }
     }
 }

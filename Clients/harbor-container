@@ -1,0 +1,179 @@
+#!/usr/bin/env python3
+"""harbor for Linux containers: same commands as the macOS CLI, over TCP to Credential Harbor.
+
+Reaches the Mac at $HARBOR_HOST (default host.docker.internal:47821; enable Settings → Containers).
+Needs HARBOR_AGENT_KEY. Runs the command inside the container; output is redacted.
+"""
+import json, os, re, socket, subprocess, sys, threading
+
+HELP = """harbor-container: use approved credentials without seeing them.
+
+  harbor-container list | doctor | help
+  harbor-container run [--env NAME=VALUE]... [--askpass AI-X] [--stdin AI-X] [--] cmd ...
+
+{{AI-X}} = password, {{AI-X.user}} = username (in args and --env values).
+Exit 77 = not allowed, 69 = can't reach Credential Harbor (run doctor)."""
+TEMPLATE = re.compile(r"\{\{(AI-[A-Za-z0-9_-]+)(\.user)?\}\}")
+ASKPASS = "HARBOR_ASKPASS_SECRET"
+KEY = os.environ.get("HARBOR_AGENT_KEY", "")
+
+
+def fail(message, code):
+    print(f"harbor: {message}", file=sys.stderr)
+    sys.exit(code)
+
+
+# ssh/sudo call us back as their askpass helper with a prompt argument.
+if ASKPASS in os.environ and (sys.argv[1:2] or [""])[0] not in ("list", "run", "doctor", "help"):
+    print(os.environ[ASKPASS])
+    sys.exit(0)
+
+
+def connect():
+    host, _, port = os.environ.get("HARBOR_HOST", "host.docker.internal:47821").rpartition(":")
+    try:
+        sock = socket.create_connection((host, int(port)), timeout=10)
+    except OSError as error:
+        fail(f"can't reach Credential Harbor at {host}:{port} ({error}). Is Settings → Containers on?", 69)
+    sock.settimeout(None)
+    return sock, sock.makefile("rwb")
+
+
+def request(stream, **fields):
+    body = {"op": "", "key": KEY, "aliases": [], "command": "", "cwd": os.getcwd(), **fields}
+    stream.write(json.dumps(body).encode() + b"\n")
+    stream.flush()
+
+
+def response(stream):
+    line = stream.readline()
+    if not line:
+        fail("Credential Harbor closed the connection.", 69)
+    return json.loads(line)
+
+
+def parse(args):
+    spec = {"env": {}, "askpass": None, "stdin": None, "command": []}
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in ("--env", "--askpass", "--stdin"):
+            if i + 1 >= len(args):
+                fail(f"{arg} needs a value", 64)
+            value = args[i + 1]
+            if arg == "--env":
+                name, eq, rest = value.partition("=")
+                if not eq or not name:
+                    fail(f"--env expects NAME=VALUE, got {value}", 64)
+                spec["env"][name] = rest
+            else:
+                spec[arg[2:]] = value
+            i += 2
+        elif arg == "--":
+            spec["command"] = args[i + 1:]
+            break
+        elif arg.startswith("--"):
+            fail(f"Unknown option {arg}", 64)
+        else:
+            spec["command"] = args[i:]
+            break
+    if not spec["command"]:
+        fail("No command given.\n\n" + HELP, 64)
+    return spec
+
+
+def aliases(spec):
+    names = {a for a in (spec["askpass"], spec["stdin"]) if a}
+    for text in spec["command"] + list(spec["env"].values()):
+        names.update(match.group(1) for match in TEMPLATE.finditer(text))
+    return sorted(names)
+
+
+def expand(text, secrets, users):
+    return TEMPLATE.sub(lambda m: (users if m.group(2) else secrets).get(m.group(1), ""), text)
+
+
+def redact(text, secrets):
+    for alias, secret in sorted(secrets.items(), key=lambda item: -len(item[1])):
+        if secret:
+            text = text.replace(secret, "{{%s}}" % alias)
+    return text
+
+
+def pump(source, sink, secrets):
+    # ponytail: line-buffered like the macOS CLI; progress bars without newlines show at the end.
+    for line in iter(source.readline, b""):
+        sink.write(redact(line.decode(errors="replace"), secrets).encode())
+        sink.flush()
+
+
+def run(args):
+    spec = parse(args)
+    sock, stream = connect()
+    request(stream, op="fetch", aliases=aliases(spec), command=" ".join(spec["command"]))
+    reply = response(stream)
+    if not reply.get("ok"):
+        fail(reply.get("error") or "denied", 77)
+    secrets = {c["alias"]: c.get("secret") or "" for c in reply["credentials"]}
+    users = {c["alias"]: c.get("username") or "" for c in reply["credentials"]}
+
+    env = {k: v for k, v in os.environ.items() if k != "HARBOR_AGENT_KEY"}
+    env.update({name: expand(value, secrets, users) for name, value in spec["env"].items()})
+    if spec["askpass"]:
+        me = os.path.realpath(sys.argv[0])
+        env.update({ASKPASS: secrets[spec["askpass"]], "SSH_ASKPASS": me, "SSH_ASKPASS_REQUIRE": "force", "SUDO_ASKPASS": me})
+    try:
+        child = subprocess.Popen([expand(a, secrets, users) for a in spec["command"]], env=env,
+                                 stdin=subprocess.PIPE if spec["stdin"] else None,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except OSError as error:
+        request(stream, op="done", exit=127)
+        fail(f"could not start {spec['command'][0]}: {error}", 127)
+    if spec["stdin"]:
+        child.stdin.write((secrets[spec["stdin"]] + "\n").encode())
+        child.stdin.close()
+    threads = [threading.Thread(target=pump, args=(pipe, sink, secrets))
+               for pipe, sink in ((child.stdout, sys.stdout.buffer), (child.stderr, sys.stderr.buffer))]
+    for thread in threads:
+        thread.start()
+    status = child.wait()
+    for thread in threads:
+        thread.join()
+    request(stream, op="done", exit=status)
+    sock.close()
+    sys.exit(status)
+
+
+def listing(doctor=False):
+    if doctor:
+        print(f"host        {os.environ.get('HARBOR_HOST', 'host.docker.internal:47821')}")
+        print(f"agent key   {'set (%d chars)' % len(KEY) if KEY else 'MISSING: containers need HARBOR_AGENT_KEY'}")
+    sock, stream = connect()
+    if doctor:
+        print("connect     ok")
+    request(stream, op="list")
+    reply = response(stream)
+    sock.close()
+    if not reply.get("ok"):
+        if doctor:
+            print(f"broker      DENIED: {reply.get('error')}")
+        else:
+            print(f"harbor: {reply.get('error')}", file=sys.stderr)
+        sys.exit(77)
+    if doctor:
+        print(f"agent       {reply.get('agent')}")
+        print(f"may use     {', '.join(c['alias'] for c in reply['credentials']) or 'nothing yet'}")
+        return
+    for c in reply["credentials"]:
+        print("\t".join(x for x in (c["alias"], c["username"] and f"user={c['username']}", c["note"]) if x))
+
+
+command = (sys.argv[1:2] or ["help"])[0]
+if command == "run":
+    run(sys.argv[2:])
+elif command in ("list", "doctor"):
+    listing(doctor=command == "doctor")
+elif command in ("help", "-h", "--help"):
+    print(HELP)
+else:
+    fail(f"unknown command {command}\n\n{HELP}", 64)

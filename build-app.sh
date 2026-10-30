@@ -15,7 +15,7 @@ APP="dist/Credential Harbor.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN/CredentialHarbor" "$BIN/harbor" "$APP/Contents/MacOS/"
-cp Resources/logo.png Resources/AppIcon.icns "$APP/Contents/Resources/"
+cp Resources/logo.png Resources/AppIcon.icns Clients/harbor-container "$APP/Contents/Resources/"
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

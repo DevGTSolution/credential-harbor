@@ -135,6 +135,7 @@ final class Model: ObservableObject {
     func pull() {
         (config, events) = Store.shared.snapshot()
         Theme.current = config.settings.theme.palette
+        Broker.setTCP(config.settings.allowTCP)
     }
 
     func reload() {
@@ -1114,6 +1115,14 @@ struct SettingsView: View {
                             Spacer()
                             Button { model.exportLog() } label: { Label("Export", systemImage: "square.and.arrow.up") }
                         }
+                    }
+                    Card(title: "Containers (Docker)", subtitle: "Lets agents in Docker containers (e.g. Hermes) reach Harbor at host.docker.internal:\(Wire.tcpPort). Listens on 127.0.0.1 only, so other machines can't connect. Container callers always need an agent key, because Harbor can't see their apps.") {
+                        Toggle(isOn: settings.allowTCP) {
+                            Text(model.config.settings.allowTCP ? "Listening on 127.0.0.1:\(Wire.tcpPort)" : "Off")
+                        }
+                        .toggleStyle(RightSwitch())
+                        Text("In the container: mount /Users/Shared/CredentialHarbor/bin, set HARBOR_AGENT_KEY, and run harbor-container (Python 3, same commands as harbor).")
+                            .font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.muted).textSelection(.enabled)
                     }
                     Card(title: "Set up AIs", subtitle: "Each agent needs its key (Agents → Generate key) plus these instructions in its prompt or AGENTS.md. The instructions are the same for every AI and contain no secrets.") {
                         HStack {

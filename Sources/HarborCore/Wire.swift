@@ -9,6 +9,8 @@ public enum Wire {
     public static let socketPath = directory + "/harbor.sock"
     public static let cliPath = directory + "/bin/harbor"
     public static let keyVariable = "HARBOR_AGENT_KEY"
+    /// Optional localhost TCP listener for containers (Docker Desktop: host.docker.internal:47821).
+    public static let tcpPort: UInt16 = 47821
 
     public struct Request: Codable, Sendable {
         public var op: String // "list" | "fetch" | "done"
