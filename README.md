@@ -74,6 +74,17 @@ It contains the key, so it stays in that chat's history.
 `/Users/Shared` (container/VM), or **the agent's sandbox blocks local sockets**. Many agent sandboxes do this
 by default, so allow that agent to reach `/Users/Shared/CredentialHarbor/harbor.sock`.
 
+**Codex:** threads get their sandbox from the app, and `config.toml` network settings may not apply. Add
+narrow allow rules to `~/.codex/rules/default.rules` and have the agent request escalated execution
+(`sandbox_permissions: "require_escalated"`) for `harbor`. The rule then approves it without a prompt:
+
+```python
+prefix_rule(pattern=["harbor", ["list", "doctor", "help"]], decision="allow")
+prefix_rule(pattern=["harbor", "run", ["--stdin", "--askpass"], "AI-Server", "--", "ssh"], decision="allow")
+```
+
+Never add a bare `["harbor"]` rule: `harbor run` can wrap any command.
+
 ## Security model: read this
 
 Credential Harbor keeps secrets out of model context and out of logs. It is **not** a sandbox.
