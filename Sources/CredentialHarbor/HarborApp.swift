@@ -66,9 +66,11 @@ Credentials: never ask me for passwords. Use the `harbor` CLI (Credential Harbor
 `harbor run --stdin AI-NAME -- ssh host 'sudo -S -p "" cmd'`, `harbor run --askpass AI-NAME -- ssh user@host cmd`, \
 `harbor run -- curl -u '{{AI-NAME.user}}:{{AI-NAME}}' URL`, `harbor run --env VAR='{{AI-NAME}}' -- cmd`. \
 Output is redacted. If harbor exits 77, tell me which AI- name you need or what it said. \
-If your shell tool runs commands in a sandbox (e.g. Codex), run harbor with escalated/unsandboxed permissions \
-(Codex: sandbox_permissions "require_escalated"); the sandbox blocks harbor's local socket. \
-If it still exits 69, run `harbor doctor` and tell me its output. Don't try to print or decode secrets. \
+Run `harbor doctor` first and confirm it names you as the agent and lists the credential you need. \
+If your shell runs in a sandbox that blocks harbor's local socket (exit 69; e.g. Codex), request escalated access \
+(Codex: sandbox_permissions "require_escalated", justification "Harbor needs its local socket") and let the \
+approval mechanism decide; never bypass a denial or disable the sandbox globally. Then run only the command I \
+asked for, the same way. Don't try to print or decode secrets. \
 `harbor help` has details.
 """
 
