@@ -12,6 +12,7 @@ let help = """
 Credential Harbor: use approved credentials without seeing them.
 
   harbor list                         credentials this agent may use (no secrets)
+  harbor doctor                       why harbor can't reach the app or your key fails
   harbor run [options] [--] cmd ...   run cmd with credentials injected; output is redacted
 
 Options (repeatable --env):
@@ -37,7 +38,7 @@ func fail(_ message: String, _ code: Int32) -> Never {
 }
 
 // ssh/sudo call us back as their askpass helper with a prompt argument.
-if let secret = ProcessInfo.processInfo.environment[Runner.askpassVariable], !["list", "run", "help"].contains(args.dropFirst().first ?? "") {
+if let secret = ProcessInfo.processInfo.environment[Runner.askpassVariable], !["list", "run", "help", "doctor"].contains(args.dropFirst().first ?? "") {
     print(secret)
     exit(0)
 }
@@ -49,8 +50,32 @@ func session() -> LineChannel {
         _ = try? Process.run(URL(fileURLWithPath: "/usr/bin/open"), arguments: ["-gj", "-b", "local.credentialharbor"])
         for _ in 0..<20 { usleep(500_000); if let fd = Wire.connect() { return LineChannel(fd) } }
     }
-    fail("Credential Harbor isn't running on this Mac. The owner needs to be logged in with the app open (Settings → Launch at login).", 69)
+    fail(Wire.explain(errno) + " Run `harbor doctor` for details.", 69)
 }
+
+/// Prints what this process can see, so an agent can tell its owner why harbor fails. No secrets.
+func doctor() -> Never {
+    let user = getpwuid(getuid()).map { String(cString: $0.pointee.pw_name) } ?? "?"
+    print("user        \(user) (uid \(getuid()))")
+    print("cwd         \(FileManager.default.currentDirectoryPath)")
+    print("agent key   \(key.isEmpty ? "MISSING: set HARBOR_AGENT_KEY in this agent's environment" : "set (\(key.count) chars)")")
+    print("socket      \(FileManager.default.fileExists(atPath: Wire.socketPath) ? "present" : "not visible") at \(Wire.socketPath)")
+    guard let fd = Wire.connect() else { print("connect     FAILED: \(Wire.explain(errno))"); exit(69) }
+    print("connect     ok")
+    let channel = LineChannel(fd)
+    do {
+        try channel.send(Wire.Request(op: "list", key: key, cwd: FileManager.default.currentDirectoryPath))
+        guard let response = try channel.receive(Wire.Response.self) else { print("broker      closed the connection"); exit(69) }
+        if response.ok {
+            print("agent       \(response.agent ?? "?")")
+            print("may use     \(response.credentials.map(\.alias).joined(separator: ", ").nilIfEmpty ?? "nothing yet")")
+            exit(0)
+        }
+        print("broker      DENIED: \(response.error ?? "?")"); exit(77)
+    } catch { print("broker      error: \(error)"); exit(69) }
+}
+
+extension String { var nilIfEmpty: String? { isEmpty ? nil : self } }
 
 func directoryOwner() -> uid_t? {
     var info = stat()
@@ -95,6 +120,8 @@ case "run":
         try? channel.send(Wire.Request(op: "done", exit: status))
     } catch { fail("\(error)", 69) }
     exit(status)
+case "doctor":
+    doctor()
 case "help", "-h", "--help", nil:
     print(help)
 default:

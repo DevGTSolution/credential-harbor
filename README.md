@@ -61,7 +61,10 @@ invalid, install Apple's [WWDR G3 intermediate](https://www.apple.com/certificat
 3. **Settings → Copy AI instructions** and paste them into the agent's system prompt, `AGENTS.md`
    or `CLAUDE.md`. They tell it to use `harbor` instead of asking you, and they contain no secrets.
 
-`harbor list` shows an agent what it may use, along with your notes. Exit code 77 means "not allowed".
+`harbor list` shows an agent what it may use, along with your notes. Exit code 77 means "not allowed";
+69 means the CLI can't reach the app. `harbor doctor` says why: the app isn't running, the agent can't see
+`/Users/Shared` (container/VM), or **the agent's sandbox blocks local sockets**. Many agent sandboxes do this
+by default, so allow that agent to reach `/Users/Shared/CredentialHarbor/harbor.sock`.
 
 ## Security model: read this
 

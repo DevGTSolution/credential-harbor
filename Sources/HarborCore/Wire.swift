@@ -48,8 +48,19 @@ public enum Wire {
         guard fd >= 0 else { return nil }
         var address = unixAddress(socketPath)
         let result = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Foundation.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) } }
-        if result != 0 { close(fd); return nil }
+        if result != 0 { let saved = errno; close(fd); errno = saved; return nil } // callers report errno
         return fd
+    }
+
+    /// Why connect() failed, in terms an agent (or its owner) can act on.
+    public static func explain(_ code: Int32) -> String {
+        let detail = "\(String(cString: strerror(code))), errno \(code)"
+        switch code {
+        case ENOENT: return "No socket at \(socketPath) (\(detail)). The Credential Harbor app isn't running, or this process can't see the Mac's /Users/Shared (container, VM or another machine)."
+        case ECONNREFUSED: return "The socket exists but nothing is listening (\(detail)). The Credential Harbor app quit; reopen it."
+        case EPERM, EACCES: return "Not allowed to connect to \(socketPath) (\(detail)). This process runs in a sandbox that blocks local sockets; allow it to reach that path, or run harbor outside the sandbox."
+        default: return "Could not connect to \(socketPath) (\(detail))."
+        }
     }
 
     public static func unixAddress(_ path: String) -> sockaddr_un {
