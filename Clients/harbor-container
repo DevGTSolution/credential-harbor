@@ -2,7 +2,8 @@
 """harbor for Linux containers: same commands as the macOS CLI, over TCP to Credential Harbor.
 
 Reaches the Mac at $HARBOR_HOST (default host.docker.internal:47821; enable Settings → Containers).
-Needs HARBOR_AGENT_KEY. Runs the command inside the container; output is redacted.
+Key: $HARBOR_AGENT_KEY, else the file $HARBOR_AGENT_KEY_FILE (default /run/secrets/harbor_agent_key,
+which Harbor writes for you). Runs the command inside the container; output is redacted.
 """
 import json, os, re, socket, subprocess, sys, threading
 
@@ -15,7 +16,20 @@ HELP = """harbor-container: use approved credentials without seeing them.
 Exit 77 = not allowed, 69 = can't reach Credential Harbor (run doctor)."""
 TEMPLATE = re.compile(r"\{\{(AI-[A-Za-z0-9_-]+)(\.user)?\}\}")
 ASKPASS = "HARBOR_ASKPASS_SECRET"
-KEY = os.environ.get("HARBOR_AGENT_KEY", "")
+KEY_FILE = os.environ.get("HARBOR_AGENT_KEY_FILE", "/run/secrets/harbor_agent_key")
+
+
+def read_key():
+    if os.environ.get("HARBOR_AGENT_KEY"):
+        return os.environ["HARBOR_AGENT_KEY"], "environment"
+    try:
+        with open(KEY_FILE) as handle:
+            return handle.read().strip(), KEY_FILE
+    except OSError:
+        return "", ""
+
+
+KEY, KEY_SOURCE = read_key()
 
 
 def fail(message, code):
@@ -147,7 +161,7 @@ def run(args):
 def listing(doctor=False):
     if doctor:
         print(f"host        {os.environ.get('HARBOR_HOST', 'host.docker.internal:47821')}")
-        print(f"agent key   {'set (%d chars)' % len(KEY) if KEY else 'MISSING: containers need HARBOR_AGENT_KEY'}")
+        print(f"agent key   {'set (%d chars, from %s)' % (len(KEY), KEY_SOURCE) if KEY else 'MISSING: set HARBOR_AGENT_KEY or mount the key file at ' + KEY_FILE}")
     sock, stream = connect()
     if doctor:
         print("connect     ok")

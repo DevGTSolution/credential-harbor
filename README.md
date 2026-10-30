@@ -95,13 +95,21 @@ listens on `127.0.0.1:47821`, which Docker Desktop exposes to containers as `hos
 (other machines can't connect). Inside the container, use `harbor-container`, a dependency-free Python 3
 version of the CLI with the same commands:
 
+Give the agent the **Hermes** (container) type, then **Generate key → Write key file**. Harbor writes it to
+`/Users/Shared/CredentialHarbor/keys/<agent>.key`, in a folder only you can read, and rewrites it in place when you
+replace the key, so a running container sees the new one. Mount it Docker-secret style:
+
 ```yaml
-# docker-compose.yml (excerpt)
+# compose override: two read-only mounts, nothing else
 services:
   agent:
-    volumes: ["/Users/Shared/CredentialHarbor/bin:/opt/harbor:ro"]
-    environment: ["HARBOR_AGENT_KEY=${HARBOR_AGENT_KEY}"]   # from .env, never in the image
+    volumes:
+      - /Users/Shared/CredentialHarbor/bin:/opt/harbor:ro
+      - /Users/Shared/CredentialHarbor/keys/hermes.key:/run/secrets/harbor_agent_key:ro
 ```
+
+Create the key file before starting the container; otherwise Docker creates a directory at that path.
+`harbor-container` also accepts `HARBOR_AGENT_KEY` or `HARBOR_AGENT_KEY_FILE`.
 
 ```sh
 python3 /opt/harbor/harbor-container doctor
@@ -109,6 +117,16 @@ python3 /opt/harbor/harbor-container run --stdin AI-Server -- ssh server.local '
 ```
 
 Container callers always need a key: Harbor can't see their process tree.
+
+## Tested agents
+
+| Agent | How it's recognized | Notes |
+|---|---|---|
+| Claude Code | key in `~/.claude/settings.json` (Connect button) | no sandbox by default |
+| Codex (desktop / remote threads) | key in `~/.codex/config.toml` (Connect button) | sandbox blocks the socket: allow rules + `require_escalated` |
+| Cursor | key in Cursor's terminal env, or Linked app `Cursor.app` | link `~/.local/share/cursor-agent` for the CLI |
+| Electron agent apps with a local exec daemon | Linked app | no key needed |
+| Hermes / any Docker agent | key file mounted at `/run/secrets/harbor_agent_key` | `harbor-container` over `host.docker.internal:47821` |
 
 ## Security model: read this
 

@@ -916,7 +916,7 @@ struct KeySheet: View {
                      ? "Put this in \(agent.name)'s environment. The key goes in config, never in a prompt."
                      : "Harbor writes the key into \(agent.kind.rawValue)'s config for you, so it never passes through a chat.") {
                     if agent.kind.configFile != nil {
-                        Button("Add key to \(agent.kind.rawValue) config") { model.install(agent: agent, key: key) }.buttonStyle(GoldButton())
+                        Button(agent.kind == .hermes ? "Write key file" : "Add key to \(agent.kind.rawValue) config") { model.install(agent: agent, key: key) }.buttonStyle(GoldButton())
                     }
                     Text(agent.kind.setup(key: key)).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
                         .padding(10).frame(maxWidth: .infinity, alignment: .leading)

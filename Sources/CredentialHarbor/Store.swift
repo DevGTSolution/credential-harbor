@@ -12,7 +12,7 @@ enum AgentKind: String, Codable, CaseIterable, Identifiable {
         case .claude: return "Add to ~/.claude/settings.json:\n  \"env\": { \"HARBOR_AGENT_KEY\": \"\(key)\" }"
         case .codex: return "Add to ~/.codex/config.toml (under an existing [shell_environment_policy.set] if you have one):\n  [shell_environment_policy.set]\n  HARBOR_AGENT_KEY = \"\(key)\"\n\n  [sandbox_workspace_write]\n  network_access = true   # lets sandboxed commands reach Harbor"
         case .cursor: return "Add to the shell profile Cursor's agent uses (e.g. ~/.zshrc):\n  export HARBOR_AGENT_KEY=\(key)"
-        case .hermes: return "Add to the Hermes .env (as the hermes user):\n  HARBOR_AGENT_KEY=\(key)\nand put /Users/Shared/CredentialHarbor/bin on its PATH."
+        case .hermes: return "Container agent. \"Write key file\" saves the key to \(Self.containerKeyPath(for: "hermes")), then in compose:\n  volumes:\n    - /Users/Shared/CredentialHarbor/bin:/opt/harbor:ro\n    - \(Self.containerKeyPath(for: "hermes")):/run/secrets/harbor_agent_key:ro\nand run: python3 /opt/harbor/harbor-container doctor"
         case .other: return "Set in that agent's environment or .env:\n  HARBOR_AGENT_KEY=\(key)"
         }
     }
@@ -23,9 +23,14 @@ enum AgentKind: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .claude: return home.appendingPathComponent(".claude/settings.json")
         case .codex: return home.appendingPathComponent(".codex/config.toml")
+        case .hermes: return URL(fileURLWithPath: Self.containerKeyPath(for: "hermes"))
         default: return nil
         }
     }
+
+    /// Key files for container agents: a 0700 folder only the owner (and Docker Desktop, running as
+    /// the owner) can read. Mount the file read-only at /run/secrets/harbor_agent_key.
+    static func containerKeyPath(for name: String) -> String { "\(Wire.directory)/keys/\(name).key" }
 
     /// Writes the key (and, for Codex, socket access for its sandbox) into the agent's config.
     /// Keeps a one-time backup next to the file. Returns a sentence describing the change.
@@ -33,6 +38,17 @@ enum AgentKind: String, Codable, CaseIterable, Identifiable {
         guard let file = configFile else { throw HarborError.usage("\(rawValue) has no config Harbor can edit; use Copy setup.") }
         let original = try? Data(contentsOf: file)
         let updated: Data
+        if self == .hermes {
+            let folder = file.deletingLastPathComponent()
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            chmod(folder.path, 0o700)
+            // Write in place: a single-file bind mount keeps pointing at the same inode.
+            if !FileManager.default.fileExists(atPath: file.path) { FileManager.default.createFile(atPath: file.path, contents: nil, attributes: [.posixPermissions: 0o600]) }
+            let handle = try FileHandle(forWritingTo: file)
+            try handle.truncate(atOffset: 0); try handle.write(contentsOf: Data((key + "\n").utf8)); try handle.close()
+            chmod(file.path, 0o600)
+            return "Wrote the key to \(file.path). Mount it at /run/secrets/harbor_agent_key (read-only); a running container sees a replaced key immediately."
+        }
         switch self {
         case .codex:
             var text = original.map { String(decoding: $0, as: UTF8.self) } ?? ""
