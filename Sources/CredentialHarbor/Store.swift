@@ -63,6 +63,9 @@ struct Agent: Codable, Identifiable, Hashable {
     var allowed: Set<String> = []
     var paused = false
     var lastUsed: Date?
+    /// e.g. /Applications/Grok Bot.app: harbor calls from anything that app launched count as this
+    /// agent, no key needed. For apps whose environment Harbor can't set.
+    var linkedApp: String?
 }
 
 struct Health: Codable, Hashable {
@@ -188,9 +191,10 @@ final class Store: @unchecked Sendable {
     func serve(_ fd: Int32) {
         let channel = LineChannel(fd)
         let user = Self.peerUser(fd)
+        let chain = Self.ancestry(Self.peerPID(fd))
         guard let request = try? channel.receive(Wire.Request.self) else { return }
         var event = Event(agent: "Unknown", user: user, aliases: request.aliases, command: request.command, cwd: request.cwd, result: "")
-        let response = decide(request, event: &event)
+        let response = decide(request, chain: chain, event: &event)
         try? channel.send(response)
 
         guard request.op == "fetch" else { return }
@@ -204,15 +208,24 @@ final class Store: @unchecked Sendable {
         notify(event, denied: !response.ok)
     }
 
-    private func decide(_ request: Wire.Request, event: inout Event) -> Wire.Response {
+    private func decide(_ request: Wire.Request, chain: [String], event: inout Event) -> Wire.Response {
         let snapshot = lock.withLock { config }
-        guard !request.key.isEmpty else {
-            event.result = "denied: no agent key"; event.ok = false
-            return .deny("No HARBOR_AGENT_KEY in this environment. The owner adds this agent in Credential Harbor → Agents and puts its key in the agent's config.")
-        }
-        guard let agent = snapshot.agents.first(where: { $0.keyHash == Self.hash(request.key) }) else {
-            event.result = "denied: unknown agent key"; event.ok = false
-            return .deny("Unknown agent key. Ask the owner to add or re-key this agent in Credential Harbor → Agents.")
+        let agent: Agent
+        if !request.key.isEmpty {
+            // An explicit key wins; a wrong one is refused rather than falling back to the app.
+            guard let keyed = snapshot.agents.first(where: { $0.keyHash == Self.hash(request.key) }) else {
+                event.result = "denied: unknown agent key"; event.ok = false
+                return .deny("Unknown agent key. Ask the owner to add or re-key this agent in Credential Harbor → Agents.")
+            }
+            agent = keyed
+        } else if let linked = snapshot.agents.first(where: { agent in
+            agent.linkedApp.map { app in chain.contains { $0.hasPrefix(app + "/") } } ?? false
+        }) {
+            agent = linked
+        } else {
+            event.result = "denied: no agent key or linked app"; event.ok = false
+            let app = chain.compactMap(Self.appBundle).first
+            return .deny("No HARBOR_AGENT_KEY in this environment\(app.map { " and \($0) isn't linked to an agent" } ?? ""). The owner adds this agent in Credential Harbor → Agents and either puts its key in the agent's config or links its app.")
         }
         event.agent = agent.name; event.agentID = agent.id
         if snapshot.settings.pauseAll { event.result = "denied: Harbor paused"; event.ok = false; return .deny("Credential Harbor is paused by the owner.") }
@@ -260,6 +273,34 @@ final class Store: @unchecked Sendable {
     // MARK: Helpers
 
     static func hash(_ key: String) -> String { SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined() }
+
+    /// Process ID on the other end of the socket.
+    private static func peerPID(_ fd: Int32) -> pid_t {
+        var pid: pid_t = 0
+        var size = socklen_t(MemoryLayout<pid_t>.size)
+        return getsockopt(fd, 0 /* SOL_LOCAL */, 0x002 /* LOCAL_PEERPID */, &pid, &size) == 0 ? pid : 0
+    }
+
+    /// Executable paths from the caller up through its parents, as the kernel reports them.
+    static func ancestry(_ start: pid_t) -> [String] {
+        var paths: [String] = []
+        var pid = start
+        for _ in 0..<32 where pid > 1 {
+            var buffer = [CChar](repeating: 0, count: 4096)
+            if proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 { paths.append(String(cString: buffer)) }
+            var info = proc_bsdinfo()
+            let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+            guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { break }
+            pid = pid_t(info.pbi_ppid)
+        }
+        return paths
+    }
+
+    /// Outermost .app bundle containing an executable path, if any.
+    static func appBundle(_ path: String) -> String? {
+        guard let range = path.range(of: ".app/") else { return nil }
+        return String(path[..<range.lowerBound]) + ".app"
+    }
 
     private static func peerUser(_ fd: Int32) -> String {
         var uid = uid_t(), gid = gid_t()

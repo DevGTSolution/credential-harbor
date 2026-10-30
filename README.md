@@ -21,7 +21,7 @@ harbor run --env TF_VAR_client_secret='{{AI-CloudAPI}}' -- terraform plan
 ## How it works
 
 * **You approve credentials.** Add one in the app, or approve any login-keychain item whose name
-  starts with `AI-`. Harbor keeps its own copy, which macOS lets only Harbor read.
+  starts with `AI-`. **Scan** (↻) re-checks the Keychain, and Harbor also rescans whenever you switch back to it. Harbor keeps its own copy, which macOS lets only Harbor read.
 * **You register agents.** Each agent gets a key (`HARBOR_AGENT_KEY`) that goes in its
   environment or config, never in a prompt. A new agent can use nothing until you tick credentials for it.
 * **Agents call `harbor`.** The CLI sends the agent key and the credential names to the app over a
@@ -64,6 +64,9 @@ invalid, install Apple's [WWDR G3 intermediate](https://www.apple.com/certificat
    * **Tell it to use Harbor.** Use **Copy AI instructions** and paste them into its system prompt, `AGENTS.md`
      or `CLAUDE.md`. They contain no secrets.
 2. Tick the credentials it may use.
+   * **Desktop apps you can't give a key to**: use **Linked app** instead. Harbor asks macOS for the PID on
+     the other end of the socket and walks up its parent processes. Any `harbor` call launched by that app
+     counts as the agent, with no key needed. The caller can't set that chain, unlike an environment variable.
 3. Restart the agent so it picks up the new environment, then have it run `harbor doctor`.
 
 If an agent can't edit its own config, the Connect screen also offers a one-message self-setup prompt.

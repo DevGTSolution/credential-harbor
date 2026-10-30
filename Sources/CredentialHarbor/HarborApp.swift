@@ -268,6 +268,28 @@ final class Model: ObservableObject {
         catch { banner = "\(error)" }
     }
 
+    func linkApp(_ id: UUID) {
+        let panel = NSOpenPanel()
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.allowedContentTypes = [.applicationBundle]
+        panel.prompt = "Link"
+        guard panel.runModal() == .OK, let app = panel.url?.resolvingSymlinksInPath().path else { return }
+        if let other = config.agents.first(where: { $0.linkedApp == app && $0.id != id }) {
+            banner = "\(URL(fileURLWithPath: app).lastPathComponent) is already linked to \(other.name)."; return
+        }
+        update { cfg in if let i = cfg.agents.firstIndex(where: { $0.id == id }) { cfg.agents[i].linkedApp = app } }
+        banner = "Linked \(URL(fileURLWithPath: app).lastPathComponent). Its harbor calls now count as \(agent(id)?.name ?? "this agent")."
+    }
+
+    func scanKeychain() {
+        let before = Set(candidates.map(\.alias))
+        reload()
+        let new = candidates.filter { !before.contains($0.alias) }.count
+        banner = candidates.isEmpty
+            ? "No unapproved AI- items in your Keychain. Name an item AI-Something to make it show up."
+            : "Found \(candidates.count) AI- item\(candidates.count == 1 ? "" : "s") to approve\(new > 0 ? " (\(new) new)" : "")."
+    }
+
     func install(agent: Agent, key: String) {
         do { banner = try agent.kind.install(key: key) } catch { banner = "\(error)" }
     }
@@ -314,6 +336,7 @@ struct RootView: View {
         .preferredColorScheme(Theme.current.dark ? .dark : .light)
         .id(model.config.settings.theme) // every view re-reads Theme
         .ignoresSafeArea()
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in model.reload() }
         .sheet(isPresented: $model.addingCredential) { AddCredentialSheet() }
         .sheet(isPresented: Binding(get: { model.revealedKey != nil }, set: { if !$0 { model.revealedKey = nil } })) { KeySheet() }
     }
@@ -508,7 +531,11 @@ struct CredentialsView: View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
                 PageHeader(title: "Credentials", subtitle: "Keychain items AIs can use") {
-                    Button { model.addingCredential = true } label: { Label("Add", systemImage: "plus") }.buttonStyle(GoldButton())
+                    HStack(spacing: 8) {
+                        Button { model.scanKeychain() } label: { Image(systemName: "arrow.clockwise") }
+                            .help("Scan your Keychain for items named AI-…")
+                        Button { model.addingCredential = true } label: { Label("Add", systemImage: "plus").fixedSize() }.buttonStyle(GoldButton())
+                    }
                 }
                 ScrollView {
                     VStack(spacing: 8) {
@@ -796,6 +823,18 @@ struct AgentDetail: View {
                         Text(agent.keyCreated.map { "Key created \($0.formatted(date: .abbreviated, time: .shortened))" } ?? "No key yet. This agent can't use harbor.")
                         Spacer()
                         Button(agent.keyHash == nil ? "Generate key" : "Replace key") { model.generateKey(agentID) }.buttonStyle(GoldButton())
+                    }
+                }
+
+                Card(title: "Linked app", subtitle: "For apps Harbor can't give a key to (e.g. Grok Bot). harbor calls from anything this app launches count as \(agent.name), no key needed. Harbor checks this with macOS, so the caller can't fake it.") {
+                    HStack(spacing: 10) {
+                        Image(systemName: agent.linkedApp == nil ? "app.dashed" : "app.badge.checkmark.fill")
+                            .foregroundStyle(agent.linkedApp == nil ? Theme.muted : Theme.good)
+                        Text(agent.linkedApp.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "No app linked")
+                        Spacer()
+                        if agent.linkedApp != nil { Button("Unlink") { model.update { cfg in
+                            if let i = cfg.agents.firstIndex(where: { $0.id == agentID }) { cfg.agents[i].linkedApp = nil } } } }
+                        Button(agent.linkedApp == nil ? "Choose app…" : "Change…") { model.linkApp(agentID) }.buttonStyle(GoldButton())
                     }
                 }
 

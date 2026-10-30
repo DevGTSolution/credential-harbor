@@ -58,7 +58,7 @@ func doctor() -> Never {
     let user = getpwuid(getuid()).map { String(cString: $0.pointee.pw_name) } ?? "?"
     print("user        \(user) (uid \(getuid()))")
     print("cwd         \(FileManager.default.currentDirectoryPath)")
-    print("agent key   \(key.isEmpty ? "MISSING: set HARBOR_AGENT_KEY in this agent's environment" : "set (\(key.count) chars)")")
+    print("agent key   \(key.isEmpty ? "not set (fine if the owner linked this agent's app)" : "set (\(key.count) chars)")")
     print("socket      \(FileManager.default.fileExists(atPath: Wire.socketPath) ? "present" : "not visible") at \(Wire.socketPath)")
     guard let fd = Wire.connect() else { print("connect     FAILED: \(Wire.explain(errno))"); exit(69) }
     print("connect     ok")
