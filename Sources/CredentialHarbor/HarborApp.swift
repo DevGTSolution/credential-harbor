@@ -211,8 +211,8 @@ final class Model: ObservableObject {
     }
 
     func removeAgent(_ id: UUID) {
+        selectedAgent = config.agents.first { $0.id != id }?.id // move off it before it disappears
         update { $0.agents.removeAll { $0.id == id } }
-        selectedAgent = config.agents.first?.id
     }
 
     func generateKey(_ id: UUID) {
@@ -765,7 +765,11 @@ struct AgentDetail: View {
     @State private var confirmRemove = false
 
     var body: some View {
-        let agent = model.agent(agentID)!
+        // The agent can vanish mid-update (removed); render nothing rather than crash.
+        if let agent = model.agent(agentID) { detail(agent) }
+    }
+
+    private func detail(_ agent: Agent) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 14) {
@@ -806,7 +810,7 @@ struct AgentDetail: View {
                 }
 
                 Card(title: "Recent activity") {
-                    let mine = model.events.filter { $0.agent == agent.name }.suffix(5).reversed()
+                    let mine = model.events.filter { $0.agentID == agent.id } // by ID: a new agent with a reused name starts clean.suffix(5).reversed()
                     if mine.isEmpty { Text("Nothing yet.").foregroundStyle(Theme.muted) }
                     ForEach(Array(mine)) { EventRow(event: $0, compact: true) }
                 }

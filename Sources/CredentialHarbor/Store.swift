@@ -112,6 +112,7 @@ struct Event: Codable, Identifiable, Hashable {
     var id = UUID()
     var date = Date()
     var agent: String
+    var agentID: UUID?   // nil for unknown callers and for events from before 1.2
     var user: String
     var aliases: [String]
     var command: String
@@ -213,7 +214,7 @@ final class Store: @unchecked Sendable {
             event.result = "denied: unknown agent key"; event.ok = false
             return .deny("Unknown agent key. Ask the owner to add or re-key this agent in Credential Harbor → Agents.")
         }
-        event.agent = agent.name
+        event.agent = agent.name; event.agentID = agent.id
         if snapshot.settings.pauseAll { event.result = "denied: Harbor paused"; event.ok = false; return .deny("Credential Harbor is paused by the owner.") }
         if agent.paused { event.result = "denied: agent paused"; event.ok = false; return .deny("\(agent.name) is paused in Credential Harbor.") }
 
