@@ -79,7 +79,7 @@ struct Agent: Codable, Identifiable, Hashable {
     var allowed: Set<String> = []
     var paused = false
     var lastUsed: Date?
-    /// Apps or folders (e.g. /Applications/Grok Bot.app, ~/.local/share/cursor-agent): harbor calls from
+    /// Apps or folders (e.g. /Applications/Some Agent.app, ~/.local/share/cursor-agent): harbor calls from
     /// anything launched from inside them count as this agent, no key needed. For tools whose
     /// environment Harbor can't set. `linkedApp` is the single link from 1.2 configs.
     var linkedApp: String?

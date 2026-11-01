@@ -18,7 +18,7 @@ check(expanded == "-u admin:s3cret s3cret", "template expansion")
 let redacted = Redactor.redact("token=abcd1234 inner=abcd\n", secrets: ["AI-Long": "abcd1234", "AI-Short": "abcd"])
 check(redacted == "token={{AI-Long}} inner={{AI-Short}}\n", "redaction, longest first")
 check(Redactor.redact("x", secrets: ["AI-Empty": ""]) == "x", "empty secret ignored")
-check(Vault.isValidAlias("AI-M2_admin") && !Vault.isValidAlias("AI-") && !Vault.isValidAlias("AI-a b"), "alias validation")
+check(Vault.isValidAlias("AI-Host_admin") && !Vault.isValidAlias("AI-") && !Vault.isValidAlias("AI-a b"), "alias validation")
 
 // Config patching: the user's real Codex layout already has [shell_environment_policy.set].
 let codex = "approval_policy = \"never\"\n\n[shell_environment_policy.set]\nOTHER = \"x\"\n\n[mcp_servers.a]\ncommand = \"b\""

@@ -846,7 +846,7 @@ struct AgentDetail: View {
                     }
                 }
 
-                Card(title: "Linked apps", subtitle: "For tools Harbor can't give a key to (e.g. Grok Bot, Cursor). harbor calls launched from a linked app or folder count as \(agent.name), no key needed. Harbor checks this with macOS, so the caller can't fake it.") {
+                Card(title: "Linked apps", subtitle: "For tools Harbor can't give a key to (e.g. desktop agent apps, Cursor). harbor calls launched from a linked app or folder count as \(agent.name), no key needed. Harbor checks this with macOS, so the caller can't fake it.") {
                     if agent.links.isEmpty {
                         HStack(spacing: 10) {
                             Image(systemName: "app.dashed").foregroundStyle(Theme.muted)
