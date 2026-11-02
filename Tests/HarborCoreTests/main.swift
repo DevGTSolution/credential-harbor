@@ -11,6 +11,11 @@ check(try RunSpec.parse(["ssh", "host", "--env"]).command == ["ssh", "host", "--
 check((try? RunSpec.parse(["--env", "x"])) == nil, "malformed --env rejected")
 check((try? RunSpec.parse(["--askpass", "Bad"])) == nil, "non AI- alias rejected")
 check((try? RunSpec.parse([])) == nil, "missing command rejected")
+let quiet = try RunSpec.parse(["--noninteractive", "--stdin", "AI-Key", "--", "receiver"])
+check(quiet.noninteractive && quiet.stdin == "AI-Key" && quiet.command == ["receiver"], "--noninteractive parsed")
+check(!(try RunSpec.parse(["ssh", "--noninteractive"])).noninteractive, "--noninteractive after the command is the command's")
+let oldRequest = try JSONDecoder().decode(Wire.Request.self, from: Data(#"{"op":"fetch","key":"","aliases":[],"command":"","cwd":""}"#.utf8))
+check(oldRequest.noninteractive == nil, "requests without the field stay interactive")
 
 let expanded = Template.expand("-u {{AI-Pf.user}}:{{AI-Pf}} {{AI-Pf}}", secrets: ["AI-Pf": "s3cret"], usernames: ["AI-Pf": "admin"])
 check(expanded == "-u admin:s3cret s3cret", "template expansion")
@@ -33,4 +38,28 @@ let json = try ConfigPatch.jsonEnv(Data(#"{"model":"opus","env":{"A":"1"}}"#.utf
 let parsed = try JSONSerialization.jsonObject(with: json) as! [String: Any]
 check((parsed["env"] as! [String: String]) == ["A": "1", "HARBOR_AGENT_KEY": "k"] && parsed["model"] as? String == "opus", "json: env key merged, rest kept")
 check((try? ConfigPatch.jsonEnv(Data("{oops".utf8), key: "K", value: "v")) == nil, "json: invalid file refused")
+// Service key files: 0600 from creation, 0700 folder, replace keeps 0600, slug is stable.
+let keyDir = NSTemporaryDirectory() + "harbor-keyfile-\(getpid())"
+KeyFile.directory = keyDir
+check(KeyFile.path(for: "Backup Service") == keyDir + "/backup-service.key", "keyfile: slug from agent name")
+let keyPath = KeyFile.path(for: "Backup Service")
+umask(0)  // a permissive umask must not widen the file
+try KeyFile.write("hbk_test1", to: keyPath)
+var st = stat(); lstat(keyPath, &st); var dt = stat(); lstat(keyDir, &dt)
+check(st.st_mode & 0o777 == 0o600 && dt.st_mode & 0o777 == 0o700, "keyfile: file 0600, folder 0700")
+try KeyFile.write("hbk_test2", to: keyPath); lstat(keyPath, &st)
+check((try? String(contentsOfFile: keyPath, encoding: .utf8)) == "hbk_test2\n" && st.st_mode & 0o777 == 0o600, "keyfile: replace keeps 0600")
+check(!FileManager.default.fileExists(atPath: keyPath + ".new"), "keyfile: no temp left")
+// Ownership: a name can't take Hermes's file, another agent's file, or a file Harbor didn't write for it.
+func refused(_ body: () throws -> Void) -> Bool { (try? body()) == nil }
+check(KeyFile.path(for: "Hermes") == keyDir + "/hermes.key", "keyfile: an Other agent named Hermes maps to hermes.key")
+check(refused { try KeyFile.claim(KeyFile.path(for: "Hermes"), for: "A", owned: [:]) }, "keyfile: hermes.key reserved")
+check(refused { try KeyFile.claim(keyPath, for: "B", owned: ["A": keyPath]) }, "keyfile: another agent's file refused")
+check(refused { try KeyFile.claim(keyPath, for: "B", owned: [:]) }, "keyfile: existing unrecorded file refused")
+check(!refused { try KeyFile.claim(keyPath, for: "A", owned: ["A": keyPath]) }, "keyfile: owner may rewrite its own file")
+check(!refused { try KeyFile.claim(keyDir + "/fresh.key", for: "C", owned: ["A": keyPath]) }, "keyfile: fresh path allowed")
+umask(0o022); try? FileManager.default.removeItem(atPath: keyDir)
+check(versionLabel(["CFBundleShortVersionString": "1.4.0", "CFBundleVersion": "140"]) == "Credential Harbor 1.4.0 (140)", "version label: short + build")
+check(versionLabel(["CFBundleShortVersionString": "1.4.0"]) == "Credential Harbor 1.4.0", "version label: no build")
+check(versionLabel(nil) == "Credential Harbor" && versionLabel(["CFBundleShortVersionString": ""]) == "Credential Harbor", "version label: unbundled falls back")
 print("PASS")

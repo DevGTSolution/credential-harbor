@@ -7,6 +7,8 @@ public struct RunSpec: Equatable, Sendable {
     public var askpass: String?
     public var stdin: String?
     public var command: [String] = []
+    /// Background callers: never prompt; fail with exit 64/77/69 instead.
+    public var noninteractive = false
 
     public init(env: [String: String] = [:], askpass: String? = nil, stdin: String? = nil, command: [String] = []) {
         self.env = env; self.askpass = askpass; self.stdin = stdin; self.command = command
@@ -36,6 +38,7 @@ public struct RunSpec: Equatable, Sendable {
                 spec.env[String(pair[..<eq])] = String(pair[pair.index(after: eq)...])
             case "--askpass": spec.askpass = try value(arg)
             case "--stdin": spec.stdin = try value(arg)
+            case "--noninteractive": spec.noninteractive = true
             case "--": spec.command = Array(args[(index + 1)...]); index = args.count
             default:
                 guard !arg.hasPrefix("--") else { throw HarborError.usage("Unknown option \(arg)") }

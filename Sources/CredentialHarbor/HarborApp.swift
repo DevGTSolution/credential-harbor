@@ -78,15 +78,72 @@ asked for, the same way. Don't try to print or decode secrets. \
 
 @main
 struct HarborApp: App {
+    @NSApplicationDelegateAdaptor private var delegate: AppDelegate
     @StateObject private var model = Model()
 
     var body: some Scene {
-        WindowGroup("Credential Harbor") {
+        // Harbor lives in the menu bar; the window opens on demand and the Dock icon shows only while it is open.
+        Window("Credential Harbor", id: "main") {
             RootView()
                 .environmentObject(model)
                 .frame(minWidth: 1000, minHeight: 660)
+                .onAppear { NSApp.setActivationPolicy(.regular) }
+                .onDisappear { NSApp.setActivationPolicy(.accessory) }
         }
         .windowStyle(.hiddenTitleBar)
+        .defaultLaunchBehavior(.suppressed)
+        MenuBarExtra {
+            HarborMenu().environmentObject(model)
+        } label: {
+            MenuBarIcon()
+        }
+    }
+}
+
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    static var openWindow: () -> Void = {}   // set by the always-present menu bar icon
+
+    static func openMain() {
+        openWindow()
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate()
+    }
+
+    func applicationWillFinishLaunching(_ notification: Notification) { NSApp.setActivationPolicy(.accessory) }
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        if !hasVisibleWindows { Self.openMain() }  // opening the app again from Finder or Spotlight shows the window
+        return true
+    }
+}
+
+struct MenuBarIcon: View {
+    @Environment(\.openWindow) private var openWindow
+    var body: some View {
+        Image(systemName: "lock.shield")
+            .onAppear { AppDelegate.openWindow = { openWindow(id: "main") } }
+    }
+}
+
+struct HarborMenu: View {
+    @EnvironmentObject var model: Model
+    var body: some View {
+        if let error = model.brokerError { Text("Not serving agents: \(error)") } else { Text("Serving agents") }
+        Text("\(model.config.agents.count) agents · \(model.config.credentials.count) credentials")
+        let recent = Array(model.events.suffix(3).reversed())
+        if !recent.isEmpty {
+            Divider()
+            ForEach(recent) { event in
+                let mark = event.ok == nil ? "…" : event.ok! ? "✓" : "✕"
+                Text("\(mark) \(event.agent): \(event.aliases.joined(separator: ", ")) · \(event.date.formatted(date: .omitted, time: .shortened))")
+            }
+        }
+        Divider()
+        Button("Open Credential Harbor") { AppDelegate.openMain() }.keyboardShortcut("o")
+        Button("Activity") { model.section = .activity; AppDelegate.openMain() }
+        Divider()
+        Button("Quit Credential Harbor (agents lose access)") { NSApp.terminate(nil) }.keyboardShortcut("q")
     }
 }
 
@@ -196,6 +253,16 @@ final class Model: ObservableObject {
         reload()
     }
 
+    /// Rotation: same name, username, note and agent ticks; only the secret changes.
+    func replaceSecret(_ entry: VaultEntry, _ secret: String) {
+        do {
+            try Vault.save(alias: entry.alias, username: entry.username, secret: secret)
+            update { $0.credentials[entry.alias, default: CredentialMeta()].replaced = Date() }
+            banner = "Replaced \(entry.alias)'s secret. Agents keep access and get the new one on their next request."
+        } catch { banner = "\(error)" }
+        reload()
+    }
+
     func revoke(_ alias: String) {
         do {
             try Vault.remove(alias)
@@ -217,6 +284,8 @@ final class Model: ObservableObject {
 
     func removeAgent(_ id: UUID) {
         selectedAgent = config.agents.first { $0.id != id }?.id // move off it before it disappears
+        // Only the file Harbor recorded writing for this agent; never a path derived from its name.
+        if let file = agent(id)?.keyFile, !KeyFile.reserved.contains(file) { try? FileManager.default.removeItem(atPath: file) }
         update { $0.agents.removeAll { $0.id == id } }
     }
 
@@ -311,6 +380,19 @@ final class Model: ObservableObject {
     }
 
     func install(agent: Agent, key: String) {
+        if agent.kind == .other {
+            let path = AgentKind.serviceKeyPath(for: agent.name)
+            let owned = Dictionary(config.agents.compactMap { a in a.keyFile.map { (a.id.uuidString, $0) } }, uniquingKeysWith: { a, _ in a })
+            do {
+                try KeyFile.claim(path, for: agent.id.uuidString, owned: owned)
+                try AgentKind.writeServiceKey(key, to: path)
+                // Renamed since the last write: its old file holds a dead key and is still ours.
+                if let old = agent.keyFile, old != path, !KeyFile.reserved.contains(old) { try? FileManager.default.removeItem(atPath: old) }
+                update { config in if let i = config.agents.firstIndex(where: { $0.id == agent.id }) { config.agents[i].keyFile = path } }
+                banner = "Wrote \(agent.name)'s key to \(path) (0600). The service reads it at startup."
+            } catch { banner = "\(error)" }
+            return
+        }
         do { banner = try agent.kind.install(key: key) } catch { banner = "\(error)" }
     }
 
@@ -639,6 +721,8 @@ struct CredentialDetail: View {
     @EnvironmentObject var model: Model
     let entry: VaultEntry
     @State private var confirmRevoke = false
+    @State private var newSecret = ""
+    @State private var confirmReplace = false
 
     var body: some View {
         let meta = model.meta(entry.alias)
@@ -694,11 +778,25 @@ struct CredentialDetail: View {
                     }
                 }
 
+                Card(title: "Replace secret", subtitle: "Rotate an API key or update a changed password. The name, note and agent access stay the same.") {
+                    SecureField("New secret", text: $newSecret, prompt: Text("new password, API key or token"))
+                        .textFieldStyle(.roundedBorder)
+                    HStack(spacing: 10) {
+                        Button("Replace") { confirmReplace = true }.buttonStyle(GoldButton()).disabled(newSecret.isEmpty)
+                        if let replaced = meta.replaced {
+                            Text("Last replaced \(replaced.formatted(date: .abbreviated, time: .shortened))").foregroundStyle(Theme.muted)
+                        }
+                    }
+                }
+
                 Card(title: "Revoke", subtitle: "Removes Harbor's copy. Every agent loses access immediately; the original Keychain item stays.") {
                     Button("Revoke \(entry.alias)") { confirmRevoke = true }.buttonStyle(GoldButton(destructive: true))
                 }
             }
             .padding(.horizontal, 24).padding(.bottom, 24)
+        }
+        .confirmationDialog("Replace \(entry.alias)'s secret? Agents use the new one from their next request.", isPresented: $confirmReplace) {
+            Button("Replace") { model.replaceSecret(entry, newSecret); newSecret = "" }
         }
         .confirmationDialog("Revoke \(entry.alias) for all agents?", isPresented: $confirmRevoke) {
             Button("Revoke", role: .destructive) { model.revoke(entry.alias) }
@@ -915,8 +1013,8 @@ struct KeySheet: View {
                 Step(number: 1, title: "Give \(agent.name) its key", detail: agent.kind.configFile == nil
                      ? "Put this in \(agent.name)'s environment. The key goes in config, never in a prompt."
                      : "Harbor writes the key into \(agent.kind.rawValue)'s config for you, so it never passes through a chat.") {
-                    if agent.kind.configFile != nil {
-                        Button(agent.kind == .hermes ? "Write key file" : "Add key to \(agent.kind.rawValue) config") { model.install(agent: agent, key: key) }.buttonStyle(GoldButton())
+                    if agent.kind.configFile != nil || agent.kind == .other {
+                        Button(agent.kind == .hermes || agent.kind == .other ? "Write key file" : "Add key to \(agent.kind.rawValue) config") { model.install(agent: agent, key: key) }.buttonStyle(GoldButton())
                     }
                     Text(agent.kind.setup(key: key)).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
                         .padding(10).frame(maxWidth: .infinity, alignment: .leading)
@@ -1081,7 +1179,7 @@ struct SettingsView: View {
     var body: some View {
         let settings = Binding(get: { model.config.settings }, set: { value in model.update { $0.settings = value } })
         VStack(spacing: 0) {
-            PageHeader(title: "Settings", subtitle: "Credential Harbor 1.2") { EmptyView() }
+            PageHeader(title: "Settings", subtitle: versionLabel(Bundle.main.infoDictionary)) { EmptyView() }
             ScrollView {
                 VStack(spacing: 14) {
                     Card(title: "Theme") {
@@ -1103,7 +1201,7 @@ struct SettingsView: View {
                         .pickerStyle(.segmented)
                     }
                     Card(title: "Launch at login", subtitle: "harbor only works while the app is running, so keep it on for overnight work.") {
-                        Toggle("Open Credential Harbor at login", isOn: Binding(get: { model.launchAtLogin }, set: { model.setLaunchAtLogin($0) }))
+                        Toggle("Start Credential Harbor in the menu bar at login", isOn: Binding(get: { model.launchAtLogin }, set: { model.setLaunchAtLogin($0) }))
                             .toggleStyle(RightSwitch())
                     }
                     Card(title: "Activity log") {

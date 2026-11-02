@@ -19,6 +19,9 @@ Options (repeatable --env):
   --env NAME=VALUE    set env var; {{AI-X}} = password, {{AI-X.user}} = username
   --askpass AI-X      answer ssh password prompts and `sudo -A` with AI-X
   --stdin AI-X        write AI-X's password to the command's stdin (`sudo -S`)
+  --noninteractive    for background jobs: never start the app or show a dialog;
+                      exit 64 if the app lacks this mode, 77 if denied or the
+                      keychain is locked or would prompt, 69 if the app isn't running
   {{AI-X}} / {{AI-X.user}} may also appear directly in cmd arguments.
 
 Examples:
@@ -51,6 +54,23 @@ func session() -> LineChannel {
         for _ in 0..<20 { usleep(500_000); if let fd = Wire.connect() { return LineChannel(fd) } }
     }
     fail(Wire.explain(errno) + " Run `harbor doctor` for details.", 69)
+}
+
+/// Background mode: doesn't start the app, and asks the broker whether it supports the mode
+/// before sending any fetch, so an older app never gets a request it would answer with a dialog.
+func quietSession() -> LineChannel {
+    func open() -> LineChannel {
+        guard let fd = Wire.connect() else { fail(Wire.explain(errno), 69) }
+        return LineChannel(fd)
+    }
+    let probe = open()
+    let features: [String]
+    do {
+        try probe.send(Wire.Request(op: "hello"))
+        features = try probe.receive(Wire.Response.self)?.features ?? []
+    } catch { fail("\(error)", 69) }
+    guard features.contains("noninteractive") else { fail("This Credential Harbor app doesn't support --noninteractive. Update and relaunch it.", 64) }
+    return open()
 }
 
 /// Prints what this process can see, so an agent can tell its owner why harbor fails. No secrets.
@@ -102,11 +122,12 @@ case "list":
 case "run":
     let spec: RunSpec
     do { spec = try RunSpec.parse(Array(args.dropFirst(2))) } catch { fail("\(error)\n\n\(help)", 64) }
-    let channel = session()
+    let channel = spec.noninteractive ? quietSession() : session()
     var status: Int32 = 1
     do {
         try channel.send(Wire.Request(op: "fetch", key: key, aliases: spec.aliases.sorted(),
-                                      command: spec.command.joined(separator: " "), cwd: FileManager.default.currentDirectoryPath))
+                                      command: spec.command.joined(separator: " "), cwd: FileManager.default.currentDirectoryPath,
+                                      noninteractive: spec.noninteractive ? true : nil))
         guard let response = try channel.receive(Wire.Response.self) else { fail("Credential Harbor closed the connection.", 69) }
         guard response.ok else { fail(response.error ?? "denied", 77) }
         var secrets: [String: String] = [:], usernames: [String: String] = [:]

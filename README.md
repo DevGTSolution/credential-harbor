@@ -30,12 +30,22 @@ harbor run --env TF_VAR_client_secret='{{AI-CloudAPI}}' -- terraform plan
   and `sudo -A` prompts). Every occurrence in the output is replaced with `{{AI-X}}`.
 * **You stay in control.** Activity log (who, what, exit code), per-agent pause, revoke, Pause all,
   notifications for denied or unknown callers, a per-credential health check, and four themes.
+  **Replace secret** rotates a credential without touching who may use it.
+* **It lives in the menu bar.** Harbor starts in the background with a menu bar icon showing
+  whether it's serving agents and the last few requests. Open the window from there; closing it
+  keeps Harbor running. Turn on **Start in the menu bar at login** for overnight work.
+* **Background jobs never get a dialog.** `harbor run --noninteractive …` doesn't start the app or
+  show any Keychain prompt: it exits 77 if the request is denied, the keychain is locked or macOS
+  would ask, 69 if the app isn't running, and 64 if the app is too old for the mode.
+* **Services can use a key file.** For an **Other** agent, **Write key file** saves its key to
+  `/Users/Shared/CredentialHarbor/keys/<agent-name>.key` (0600, in a 0700 folder), so a
+  LaunchAgent or daemon can read it at startup instead of holding it in its config.
 
 Permissions last until you revoke them: no timers, and no prompt per command.
 
 ## Install (build from source)
 
-Requires macOS 14+ and Xcode 16+.
+Requires macOS 15+ and Xcode 16+.
 
 ```sh
 git clone https://github.com/DevGTSolution/credential-harbor.git

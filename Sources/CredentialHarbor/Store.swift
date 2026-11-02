@@ -13,7 +13,7 @@ enum AgentKind: String, Codable, CaseIterable, Identifiable {
         case .codex: return "Add to ~/.codex/config.toml (under an existing [shell_environment_policy.set] if you have one):\n  [shell_environment_policy.set]\n  HARBOR_AGENT_KEY = \"\(key)\"\n\n  [sandbox_workspace_write]\n  network_access = true   # lets sandboxed commands reach Harbor"
         case .cursor: return "Add to the shell profile Cursor's agent uses (e.g. ~/.zshrc):\n  export HARBOR_AGENT_KEY=\(key)"
         case .hermes: return "Container agent. \"Write key file\" saves the key to \(Self.containerKeyPath(for: "hermes")), then in compose:\n  volumes:\n    - /Users/Shared/CredentialHarbor/bin:/opt/harbor:ro\n    - \(Self.containerKeyPath(for: "hermes")):/run/secrets/harbor_agent_key:ro\nand run: python3 /opt/harbor/harbor-container doctor"
-        case .other: return "Set in that agent's environment or .env:\n  HARBOR_AGENT_KEY=\(key)"
+        case .other: return "Set in that agent's environment or .env:\n  HARBOR_AGENT_KEY=\(key)\nor, for a background service, \"Write key file\" saves it to \(Self.containerKeyPath(for: "<agent-name>")) (0600) for the service to read."
         }
     }
 
@@ -31,6 +31,9 @@ enum AgentKind: String, Codable, CaseIterable, Identifiable {
     /// Key files for container agents: a 0700 folder only the owner (and Docker Desktop, running as
     /// the owner) can read. Mount the file read-only at /run/secrets/harbor_agent_key.
     static func containerKeyPath(for name: String) -> String { "\(Wire.directory)/keys/\(name).key" }
+
+    static func serviceKeyPath(for agentName: String) -> String { KeyFile.path(for: agentName) }
+    static func writeServiceKey(_ key: String, to path: String) throws { try KeyFile.write(key, to: path) }
 
     /// Writes the key (and, for Codex, socket access for its sandbox) into the agent's config.
     /// Keeps a one-time backup next to the file. Returns a sentence describing the change.
@@ -79,6 +82,8 @@ struct Agent: Codable, Identifiable, Hashable {
     var allowed: Set<String> = []
     var paused = false
     var lastUsed: Date?
+    /// The key file Harbor wrote for this agent (Other agents only). Optional: older builds ignore it.
+    var keyFile: String?
     /// Apps or folders (e.g. /Applications/Some Agent.app, ~/.local/share/cursor-agent): harbor calls from
     /// anything launched from inside them count as this agent, no key needed. For tools whose
     /// environment Harbor can't set. `linkedApp` is the single link from 1.2 configs.
@@ -98,6 +103,7 @@ struct CredentialMeta: Codable, Hashable {
     var test = ""
     var health: Health?
     var lastUsed: Date?
+    var replaced: Date?  // optional, so older Harbor builds still read this config
 }
 
 enum NotifyLevel: String, Codable, CaseIterable, Identifiable {
@@ -214,6 +220,7 @@ final class Store: @unchecked Sendable {
         let user = Self.peerUser(fd)
         let chain = Self.ancestry(Self.peerPID(fd))
         guard let request = try? channel.receive(Wire.Request.self) else { return }
+        if request.op == "hello" { try? channel.send(Wire.Response(ok: true, features: Wire.features)); return }
         var event = Event(agent: "Unknown", user: user, aliases: request.aliases, command: request.command, cwd: request.cwd, result: "")
         let response = decide(request, chain: chain, event: &event)
         try? channel.send(response)
@@ -252,7 +259,12 @@ final class Store: @unchecked Sendable {
         if snapshot.settings.pauseAll { event.result = "denied: Harbor paused"; event.ok = false; return .deny("Credential Harbor is paused by the owner.") }
         if agent.paused { event.result = "denied: agent paused"; event.ok = false; return .deny("\(agent.name) is paused in Credential Harbor.") }
 
-        let approved = (try? Vault.entries()) ?? []
+        let quiet = request.noninteractive == true
+        let approved: [VaultEntry]
+        do { approved = try Vault.entries(interactive: !quiet) } catch where !quiet { approved = [] } catch {
+            event.result = "denied: \(error)"; event.ok = false
+            return .deny("\(error)")
+        }
         if request.op == "list" {
             let mine = approved.filter { agent.allowed.contains($0.alias) }
             return Wire.Response(ok: true, agent: agent.name, credentials: mine.map {
@@ -267,7 +279,7 @@ final class Store: @unchecked Sendable {
         }
         do {
             let credentials = try request.aliases.map { alias in
-                Wire.Credential(alias: alias, username: approved.first { $0.alias == alias }?.username ?? "", note: "", secret: try Vault.secret(alias))
+                Wire.Credential(alias: alias, username: approved.first { $0.alias == alias }?.username ?? "", note: "", secret: try Vault.secret(alias, interactive: !quiet))
             }
             event.result = "running"
             update { config in

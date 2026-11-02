@@ -11,16 +11,20 @@ public enum Wire {
     public static let keyVariable = "HARBOR_AGENT_KEY"
     /// Optional localhost TCP listener for containers (Docker Desktop: host.docker.internal:47821).
     public static let tcpPort: UInt16 = 47821
+    /// What this broker supports, answered to "hello" before any Keychain access.
+    public static let features = ["noninteractive"]
 
     public struct Request: Codable, Sendable {
-        public var op: String // "list" | "fetch" | "done"
+        public var op: String // "hello" | "list" | "fetch" | "done"
         public var key = ""
         public var aliases: [String] = []
         public var command = ""
         public var cwd = ""
         public var exit: Int32?
-        public init(op: String, key: String = "", aliases: [String] = [], command: String = "", cwd: String = "", exit: Int32? = nil) {
-            self.op = op; self.key = key; self.aliases = aliases; self.command = command; self.cwd = cwd; self.exit = exit
+        /// Background callers: fail instead of showing any unlock or access dialog.
+        public var noninteractive: Bool?
+        public init(op: String, key: String = "", aliases: [String] = [], command: String = "", cwd: String = "", exit: Int32? = nil, noninteractive: Bool? = nil) {
+            self.op = op; self.key = key; self.aliases = aliases; self.command = command; self.cwd = cwd; self.exit = exit; self.noninteractive = noninteractive
         }
     }
 
@@ -39,8 +43,9 @@ public enum Wire {
         public var error: String?
         public var agent: String?
         public var credentials: [Credential] = []
-        public init(ok: Bool, error: String? = nil, agent: String? = nil, credentials: [Credential] = []) {
-            self.ok = ok; self.error = error; self.agent = agent; self.credentials = credentials
+        public var features: [String]?
+        public init(ok: Bool, error: String? = nil, agent: String? = nil, credentials: [Credential] = [], features: [String]? = nil) {
+            self.ok = ok; self.error = error; self.agent = agent; self.credentials = credentials; self.features = features
         }
         public static func deny(_ reason: String) -> Response { Response(ok: false, error: reason) }
     }

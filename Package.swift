@@ -2,7 +2,7 @@
 import PackageDescription
 let package = Package(
     name: "CredentialHarbor",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS(.v15)],
     products: [.executable(name: "CredentialHarbor", targets: ["CredentialHarbor"]), .executable(name: "harbor", targets: ["harbor"])],
     targets: [
         .target(name: "HarborCore"),
