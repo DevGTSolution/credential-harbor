@@ -696,6 +696,7 @@ struct CredentialCard: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .contextMenu { Button("Copy name") { model.copy(entry.alias, "Copied \(entry.alias).") } }
     }
 }
 
@@ -733,7 +734,11 @@ struct CredentialDetail: View {
                         .frame(width: 52, height: 52)
                         .background(LinearGradient(colors: [Theme.accentGlow, Theme.accent], startPoint: .top, endPoint: .bottom), in: RoundedRectangle(cornerRadius: 14))
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(entry.alias).font(.system(size: 24, weight: .bold, design: .monospaced))
+                        HStack(spacing: 8) {
+                            Text(entry.alias).font(.system(size: 24, weight: .bold, design: .monospaced)).textSelection(.enabled)
+                            Button { model.copy(entry.alias, "Copied \(entry.alias).") } label: { Image(systemName: "doc.on.doc") }
+                                .buttonStyle(.borderless).help("Copy the name to give an AI")
+                        }
                         Text("\(entry.username.isEmpty ? "No username" : "User \(entry.username)") · \(ago(meta.lastUsed))")
                             .foregroundStyle(Theme.muted)
                     }

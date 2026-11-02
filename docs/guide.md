@@ -44,6 +44,9 @@ then click **Scan** (↻) in Harbor and approve it.
 
 The note is what agents see in `harbor list`, so say what the credential is for. Never put a secret in it.
 
+To tell an AI which credential to use, copy its name: the copy button next to the name on its page,
+or right-click it in the list → **Copy name**. This copies the name only, never the secret.
+
 ## 3. Connect an agent
 
 1. **Agents → Add**, pick the type (Claude, Codex, Cursor, Hermes, Other), then **Generate key**.
