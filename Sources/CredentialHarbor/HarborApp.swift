@@ -340,6 +340,65 @@ final class Model: ObservableObject {
         catch { banner = "\(error)" }
     }
 
+    /// The part of this Mac's config another Mac can use: no keys, secrets or health-check commands.
+    private var settingsFile: SettingsFile {
+        let s = config.settings
+        return SettingsFile(agents: config.agents.map { .init(name: $0.name, kind: $0.kind.rawValue, allowed: $0.allowed.sorted(), paused: $0.paused, links: $0.links) },
+                            notes: config.credentials.compactMapValues { $0.note.isEmpty ? nil : $0.note },
+                            options: .init(pauseAll: s.pauseAll, notify: s.notify.rawValue, retentionDays: s.retentionDays, theme: s.theme.rawValue, containers: s.allowTCP))
+    }
+
+    func exportSettings() {
+        let panel = NSSavePanel()
+        if let folder = SettingsFile.iCloudFolder, (try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)) != nil { panel.directoryURL = folder }
+        panel.nameFieldStringValue = "Harbor settings.json"
+        panel.allowedContentTypes = [.json]
+        panel.message = "Saves agents, which credentials each may use, notes and settings. No passwords or agent keys."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do { try JSONEncoder.iso.encode(settingsFile).write(to: url); banner = "Exported settings to \(url.lastPathComponent). Import it on your other Mac." }
+        catch { banner = "\(error)" }
+    }
+
+    /// Shows every change first: grants and linked apps take effect as soon as they're applied.
+    func importSettings() {
+        let panel = NSOpenPanel()
+        panel.directoryURL = SettingsFile.iCloudFolder
+        panel.allowedContentTypes = [.json]
+        panel.message = "Choose a Harbor settings file exported from another Mac."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let incoming = try SettingsFile.read(Data(contentsOf: url))
+            let changes = settingsFile.changes(importing: incoming)
+            guard !changes.isEmpty else { banner = "Nothing to change: this Mac already matches \(url.lastPathComponent)."; return }
+            let alert = NSAlert()
+            alert.messageText = "Import these changes?"
+            alert.informativeText = changes.joined(separator: "\n") + "\n\nPasswords and agent keys don't come with it: approve credentials and generate keys on this Mac."
+            alert.addButton(withTitle: "Import"); alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            apply(settingsFile.merging(incoming))
+            banner = "Imported \(changes.count) change\(changes.count == 1 ? "" : "s") from \(url.lastPathComponent)."
+        } catch { banner = "\(error)" }
+    }
+
+    private func apply(_ file: SettingsFile) {
+        update { config in
+            for agent in file.agents {
+                let i = config.agents.firstIndex { $0.name == agent.name } ?? { config.agents.append(Agent(name: agent.name, kind: .other)); return config.agents.count - 1 }()
+                config.agents[i].kind = AgentKind(rawValue: agent.kind) ?? .other
+                config.agents[i].allowed = Set(agent.allowed)
+                config.agents[i].paused = agent.paused
+                config.agents[i].linkedApps = agent.links; config.agents[i].linkedApp = nil
+            }
+            for (alias, note) in file.notes { config.credentials[alias, default: CredentialMeta()].note = note }
+            let o = file.options
+            config.settings.pauseAll = o.pauseAll
+            config.settings.notify = NotifyLevel(rawValue: o.notify) ?? config.settings.notify
+            config.settings.retentionDays = o.retentionDays
+            config.settings.theme = ThemeName(rawValue: o.theme) ?? config.settings.theme
+            config.settings.allowTCP = o.containers
+        }
+    }
+
     func linkApp(_ id: UUID) {
         let panel = NSOpenPanel()
         panel.directoryURL = URL(fileURLWithPath: "/Applications")
@@ -1217,6 +1276,13 @@ struct SettingsView: View {
                             .frame(width: 260)
                             Spacer()
                             Button { model.exportLog() } label: { Label("Export", systemImage: "square.and.arrow.up") }
+                        }
+                    }
+                    Card(title: "Move to another Mac", subtitle: "Export your agents, which credentials each may use, notes and settings, e.g. to iCloud Drive, and import them on your other Mac. Passwords and agent keys stay on each Mac.") {
+                        HStack {
+                            Button { model.exportSettings() } label: { Label("Export settings…", systemImage: "square.and.arrow.up") }
+                            Button { model.importSettings() } label: { Label("Import settings…", systemImage: "square.and.arrow.down") }
+                            Spacer()
                         }
                     }
                     Card(title: "Containers (Docker)", subtitle: "Lets agents in Docker containers (e.g. Hermes) reach Harbor at host.docker.internal:\(Wire.tcpPort). Listens on 127.0.0.1 only, so other machines can't connect. Container callers always need an agent key, because Harbor can't see their apps.") {

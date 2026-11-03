@@ -23,14 +23,22 @@ public enum KeyFile {
         if lstat(path, &info) == 0, owned[owner] != path { throw HarborError.usage("\(path) already exists and wasn't written for this agent. Rename this agent or remove that file yourself.") }
     }
 
+    /// Creates `path` if missing and refuses one another account made first. /Users/Shared is
+    /// writable by every local user, so whoever creates Harbor's folders there controls the CLI
+    /// every agent runs and the socket it talks to.
+    public static func ownedFolder(_ path: String, mode: mode_t) throws {
+        if mkdir(path, mode) != 0 && errno != EEXIST { throw HarborError.usage("Could not create \(path) (errno \(errno)).") }
+        var info = stat()
+        guard lstat(path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR, info.st_uid == getuid() else {
+            throw HarborError.usage("\(path) is not a folder you own, so Harbor won't use it. Another account may have created it first: have an admin remove it, then reopen Harbor.")
+        }
+        guard chmod(path, mode) == 0 else { throw HarborError.usage("Could not set permissions on \(path) (errno \(errno)).") }
+    }
+
     /// Creates the file 0600 from the first byte (O_EXCL temp, then rename). Not for a file that
     /// is bind-mounted into a container (Hermes's): a rename would orphan the mount.
     public static func write(_ key: String, to path: String) throws {
-        let folder = (path as NSString).deletingLastPathComponent
-        if mkdir(folder, 0o700) != 0 && errno != EEXIST { throw HarborError.usage("Could not create \(folder) (errno \(errno)).") }
-        var info = stat()
-        guard lstat(folder, &info) == 0, info.st_mode & S_IFMT == S_IFDIR, info.st_uid == getuid() else { throw HarborError.usage("\(folder) is not a folder you own.") }
-        chmod(folder, 0o700)
+        try ownedFolder((path as NSString).deletingLastPathComponent, mode: 0o700)
         let temp = path + ".new"
         unlink(temp)
         let fd = open(temp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)

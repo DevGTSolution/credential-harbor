@@ -42,9 +42,7 @@ enum AgentKind: String, Codable, CaseIterable, Identifiable {
         let original = try? Data(contentsOf: file)
         let updated: Data
         if self == .hermes {
-            let folder = file.deletingLastPathComponent()
-            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            chmod(folder.path, 0o700)
+            try KeyFile.ownedFolder(file.deletingLastPathComponent().path, mode: 0o700)
             // Write in place: a single-file bind mount keeps pointing at the same inode.
             if !FileManager.default.fileExists(atPath: file.path) { FileManager.default.createFile(atPath: file.path, contents: nil, attributes: [.posixPermissions: 0o600]) }
             let handle = try FileHandle(forWritingTo: file)
@@ -366,8 +364,8 @@ extension JSONDecoder { static let iso: JSONDecoder = { let d = JSONDecoder(); d
 /// connect; a valid agent key is what grants anything).
 enum Broker {
     static func start() throws {
-        try FileManager.default.createDirectory(atPath: Wire.directory + "/bin", withIntermediateDirectories: true)
-        chmod(Wire.directory, 0o755); chmod(Wire.directory + "/bin", 0o755)
+        try KeyFile.ownedFolder(Wire.directory, mode: 0o755)
+        try KeyFile.ownedFolder(Wire.directory + "/bin", mode: 0o755)
         installCLI()
         unlink(Wire.socketPath)
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)

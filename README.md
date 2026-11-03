@@ -41,6 +41,10 @@ harbor run --env TF_VAR_client_secret='{{AI-CloudAPI}}' -- terraform plan
   `/Users/Shared/CredentialHarbor/keys/<agent-name>.key` (0600, in a 0700 folder), so a
   LaunchAgent or daemon can read it at startup instead of holding it in its config.
 
+* **Move to another Mac.** **Settings → Export settings…** saves agents, which credentials each may use,
+  notes and settings to a file (iCloud Drive by default). **Import settings…** on the other Mac lists every
+  change before applying it. Passwords and agent keys never leave the Mac they're on.
+
 Permissions last until you revoke them: no timers, and no prompt per command.
 
 **New here?** The [how-to guide](docs/guide.md) walks through install, agents, scheduled jobs, Docker and troubleshooting.

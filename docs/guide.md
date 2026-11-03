@@ -131,6 +131,10 @@ services:
 * **See what happened:** **Activity** shows who asked for what, and the exit code. The menu bar
   menu shows the last few requests. Secret values are never logged.
 * **Quitting Harbor** cuts every agent off until it's running again.
+* **Set up a second Mac:** **Settings → Export settings…** (it opens iCloud Drive's Credential Harbor folder),
+  then **Import settings…** on the other Mac. Harbor lists every change, including new access and linked
+  apps, before applying it. On the new Mac, approve the credentials and generate each agent's key; health-check
+  commands aren't copied.
 
 ## 8. Troubleshooting
 

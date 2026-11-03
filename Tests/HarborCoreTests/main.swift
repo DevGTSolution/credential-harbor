@@ -58,8 +58,39 @@ check(refused { try KeyFile.claim(keyPath, for: "B", owned: ["A": keyPath]) }, "
 check(refused { try KeyFile.claim(keyPath, for: "B", owned: [:]) }, "keyfile: existing unrecorded file refused")
 check(!refused { try KeyFile.claim(keyPath, for: "A", owned: ["A": keyPath]) }, "keyfile: owner may rewrite its own file")
 check(!refused { try KeyFile.claim(keyDir + "/fresh.key", for: "C", owned: ["A": keyPath]) }, "keyfile: fresh path allowed")
+// Shared folders: a symlink (or anything not a real folder you own) is refused.
+let realDir = keyDir + "/real", linkDir = keyDir + "/link"
+try KeyFile.ownedFolder(realDir, mode: 0o755); var rt = stat(); lstat(realDir, &rt)
+check(rt.st_mode & 0o777 == 0o755, "owned folder: created with its mode")
+symlink(realDir, linkDir)
+check(refused { try KeyFile.ownedFolder(linkDir, mode: 0o755) }, "owned folder: symlink refused")
+check(refused { try KeyFile.ownedFolder(keyPath, mode: 0o700) }, "owned folder: a file refused")
 umask(0o022); try? FileManager.default.removeItem(atPath: keyDir)
 check(versionLabel(["CFBundleShortVersionString": "1.4.0", "CFBundleVersion": "140"]) == "Credential Harbor 1.4.0 (140)", "version label: short + build")
 check(versionLabel(["CFBundleShortVersionString": "1.4.0"]) == "Credential Harbor 1.4.0", "version label: no build")
 check(versionLabel(nil) == "Credential Harbor" && versionLabel(["CFBundleShortVersionString": ""]) == "Credential Harbor", "version label: unbundled falls back")
+// Settings files: no keys travel, bad files are refused, and every access change is listed.
+let opts = SettingsFile.Options(pauseAll: false, notify: "Never", retentionDays: 30, theme: "Harbor", containers: false)
+let here = SettingsFile(agents: [.init(name: "Claude", kind: "Claude", allowed: ["AI-A"], paused: true, links: []),
+                                 .init(name: "Local", kind: "Other", allowed: [], paused: false, links: [])], notes: ["AI-A": "old"], options: opts)
+var moreOpts = opts; moreOpts.containers = true
+let there = SettingsFile(agents: [.init(name: "Claude", kind: "Claude", allowed: ["AI-A", "AI-B"], paused: false, links: ["/Applications/X.app"]),
+                                  .init(name: "Bot", kind: "Other", allowed: ["AI-C"], paused: false, links: [])], notes: ["AI-A": "new"], options: moreOpts)
+let roundTrip = try SettingsFile.read(JSONEncoder().encode(there))
+check(roundTrip == there, "settings file: round trip")
+check(!String(decoding: try JSONEncoder().encode(there), as: UTF8.self).contains("key"), "settings file: no key fields")
+check(refused { _ = try SettingsFile.read(Data(#"{"agents":[]}"#.utf8)) }, "settings file: other JSON refused")
+var badAlias = there; badAlias.agents[0].allowed = ["password"]
+check(refused { _ = try SettingsFile.read(JSONEncoder().encode(badAlias)) }, "settings file: bad credential name refused")
+var badLink = there; badLink.agents[0].links = ["X.app"]
+check(refused { _ = try SettingsFile.read(JSONEncoder().encode(badLink)) }, "settings file: relative link refused")
+var badDays = there; badDays.options.retentionDays = -1
+check(refused { _ = try SettingsFile.read(JSONEncoder().encode(badDays)) }, "settings file: bad retention refused")
+let merged = here.merging(there)
+check(merged.agents.map(\.name) == ["Claude", "Local", "Bot"] && merged.agents[0].allowed == ["AI-A", "AI-B"] && merged.notes["AI-A"] == "new", "settings file: merge by name, local agents kept")
+let lines = here.changes(importing: there)
+check(lines.contains("Claude may now use AI-B") && lines.contains("Claude gets linked apps, no key needed: /Applications/X.app")
+      && lines.contains("Claude is unpaused") && lines.contains { $0.hasPrefix("New agent Bot") }
+      && lines.contains { $0.hasPrefix("Containers (Docker) turns on") }, "settings file: access changes listed")
+check(here.changes(importing: here).isEmpty, "settings file: same settings, no changes")
 print("PASS")
