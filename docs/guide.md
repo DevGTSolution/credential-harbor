@@ -10,7 +10,8 @@ that section before granting anything you care about.
 * [5. Scheduled jobs and services](#5-scheduled-jobs-and-services)
 * [6. Agents in Docker](#6-agents-in-docker)
 * [7. Day-to-day: rotate, pause, revoke](#7-day-to-day-rotate-pause-revoke)
-* [8. Troubleshooting](#8-troubleshooting)
+* [8. Move to another Mac](#8-move-to-another-mac)
+* [9. Troubleshooting](#9-troubleshooting)
 
 ## 1. Install
 
@@ -131,12 +132,39 @@ services:
 * **See what happened:** **Activity** shows who asked for what, and the exit code. The menu bar
   menu shows the last few requests. Secret values are never logged.
 * **Quitting Harbor** cuts every agent off until it's running again.
-* **Set up a second Mac:** **Settings → Export settings…** (it opens iCloud Drive's Credential Harbor folder),
-  then **Import settings…** on the other Mac. Harbor lists every change, including new access and linked
-  apps, before applying it. On the new Mac, approve the credentials and generate each agent's key; health-check
-  commands aren't copied.
+* **Set up a second Mac:** see [8. Move to another Mac](#8-move-to-another-mac).
 
-## 8. Troubleshooting
+## 8. Move to another Mac
+
+Harbor can carry its setup to another Mac in one small file. Passwords and agent keys never leave the Mac
+they're on, so each Mac still approves its own credentials and makes its own keys.
+
+1. On this Mac: **Settings → Move to another Mac → Export settings…**. It opens iCloud Drive's
+   **Credential Harbor** folder and saves `Harbor settings.json`.
+2. On the other Mac: install Harbor (section 1), then **Settings → Import settings…** and pick that file.
+3. Harbor lists every change before applying it, access changes first ("Claude may now use AI-Server",
+   new linked apps, an agent unpaused, Containers turning on). Click **Import** or **Cancel**.
+4. Add or approve the credentials on the new Mac, then **Generate key** for each agent and give it to the agent.
+
+**What the file holds**
+
+| Included | Never included |
+|---|---|
+| Agents: name, type, credentials it may use (by name), paused, linked app paths | Secrets and passwords |
+| Credential notes | Credential usernames |
+| Pause all, notifications, activity retention, theme, Containers on/off | Agent keys (or their hashes) and key files |
+| | Health-check commands (Harbor runs them with the secret, so a file could run code) |
+| | Activity log and last-used times |
+
+**How import merges:** agents are matched by name and take the file's settings; agents only on the importing
+Mac are kept; a new agent arrives with no key. Harbor refuses a file that isn't a Harbor settings file, or that
+names an invalid credential, a relative app path or an out-of-range retention.
+
+The file isn't secret, but it shows which credentials exist, who may use them, and your notes. iCloud Drive
+isn't end-to-end encrypted unless Advanced Data Protection is on, so keep secrets out of notes (they never
+belong there anyway).
+
+## 9. Troubleshooting
 
 Start with `harbor doctor`: it says which of these it is.
 

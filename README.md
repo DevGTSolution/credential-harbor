@@ -43,11 +43,13 @@ harbor run --env TF_VAR_client_secret='{{AI-CloudAPI}}' -- terraform plan
 
 * **Move to another Mac.** **Settings → Export settings…** saves agents, which credentials each may use,
   notes and settings to a file (iCloud Drive by default). **Import settings…** on the other Mac lists every
-  change before applying it. Passwords and agent keys never leave the Mac they're on.
+  change before applying it. Passwords and agent keys never leave the Mac they're on
+  ([what's in the file](docs/guide.md#8-move-to-another-mac)).
 
 Permissions last until you revoke them: no timers, and no prompt per command.
 
-**New here?** The [how-to guide](docs/guide.md) walks through install, agents, scheduled jobs, Docker and troubleshooting.
+**New here?** The [how-to guide](docs/guide.md) walks through install, agents, scheduled jobs, Docker, moving to another Mac and troubleshooting.
+What changed in each version: [CHANGELOG](CHANGELOG.md).
 
 ## Install (build from source)
 
