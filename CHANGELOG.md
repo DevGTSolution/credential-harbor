@@ -1,5 +1,8 @@
 # Changelog
 
+## Unreleased
+* `deploy-mac.sh [user@]host …` installs the signed build on other Macs over ssh, refusing builds not signed by your team.
+
 ## 1.5.0
 * **Move to another Mac:** Settings → Export settings… / Import settings…, through iCloud Drive by default.
   Import lists every change first. No secrets, usernames, agent keys or health-check commands travel.

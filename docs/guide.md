@@ -139,9 +139,13 @@ services:
 Harbor can carry its setup to another Mac in one small file. Passwords and agent keys never leave the Mac
 they're on, so each Mac still approves its own credentials and makes its own keys.
 
+0. Install the app there. If you can ssh to it as the user who'll run Harbor, `zsh deploy-mac.sh user@other-mac`
+   copies your signed build into `~/Applications`, keeps the previous app in
+   `~/Library/Application Support/CredentialHarbor-rollback/`, and opens it. It refuses any build not signed by
+   your own Apple Development team. Copies over ssh aren't quarantined, so macOS opens it without a warning.
 1. On this Mac: **Settings → Move to another Mac → Export settings…**. It opens iCloud Drive's
    **Credential Harbor** folder and saves `Harbor settings.json`.
-2. On the other Mac: install Harbor (section 1), then **Settings → Import settings…** and pick that file.
+2. On the other Mac (installed by step 0 or section 1): **Settings → Import settings…** and pick that file.
 3. Harbor lists every change before applying it, access changes first ("Claude may now use AI-Server",
    new linked apps, an agent unpaused, Containers turning on). Click **Import** or **Cancel**.
 4. Add or approve the credentials on the new Mac, then **Generate key** for each agent and give it to the agent.
