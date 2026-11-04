@@ -104,8 +104,14 @@ public enum Vault {
         try add(alias: entry.alias, username: entry.username, secret: secret, synced: false)
     }
 
+    /// Login-keychain-only queries must say so: in an entitled build, a query without
+    /// kSecUseDataProtectionKeychain also matches data-protection items, so a "legacy" delete
+    /// would delete the new copies too (that bug in 1.6.1 erased every unsynced credential).
+    private static let fileOnly: [CFString: Any] = [kSecUseDataProtectionKeychain: false]
+
     private static let listQuery: [CFString: Any] = [kSecClass: kSecClassGenericPassword, kSecAttrService: service,
                                                      kSecMatchLimit: kSecMatchLimitAll, kSecReturnAttributes: true]
+        .merging(fileOnly) { $1 }
 
     private static func legacyEntries(interactive: Bool) throws -> [VaultEntry] {
         if interactive { return try parse(attributes(listQuery, "list")) }
@@ -139,6 +145,7 @@ public enum Vault {
     private static func legacySecret(_ alias: String, interactive: Bool) throws -> String {
         let query: [CFString: Any] = [kSecClass: kSecClassGenericPassword, kSecAttrService: service,
                                       kSecAttrAccount: alias, kSecMatchLimit: kSecMatchLimitOne, kSecReturnData: true]
+            .merging(fileOnly) { $1 }
         var result: CFTypeRef?
         let read = { SecItemCopyMatching(query as CFDictionary, &result) }
         let status = interactive ? interaction.withLock(read) : try withoutDialogs(read)
@@ -169,7 +176,7 @@ public enum Vault {
         try removeLegacy(alias)
         let item: [CFString: Any] = [kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: alias,
                                      kSecAttrLabel: "Credential Harbor: \(alias)", kSecAttrComment: username,
-                                     kSecValueData: Data(secret.utf8)]
+                                     kSecValueData: Data(secret.utf8), kSecUseDataProtectionKeychain: false]
         let status = SecItemAdd(item as CFDictionary, nil)
         guard status == errSecSuccess else { throw HarborError.keychain(status, "save of \(alias)") }
     }
@@ -199,7 +206,7 @@ public enum Vault {
     }
 
     private static func removeLegacy(_ alias: String) throws {
-        let query: [CFString: Any] = [kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: alias]
+        let query = [kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: alias].merging(fileOnly) { $1 }
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else { throw HarborError.keychain(status, "removal of \(alias)") }
     }

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.6.2 (important fix: update now if you use a Developer ID build)
+* **Fixes data loss in Developer ID builds of 1.6.0 and 1.6.1.** In an entitled build, a keychain query that
+  doesn't name a keychain matches both the login and the data-protection keychain. So **Remove old copies**
+  deleted every credential not set to sync, and **Add** / **Replace** of an unsynced credential deleted the copy it
+  had just saved. Every login-keychain query now names that keychain. Free-account builds were not affected.
+* `tools/vault-check/run.sh` runs the keychain code entitled against a dummy credential; run it before shipping
+  keychain changes (unit tests run unentitled and can't reach the data-protection keychain).
+
 ## 1.6.1
 * **Search** on the Credentials page: filters by name, username and note (and Keychain items found by Scan).
 * **Remove old copies:** after moving to the 1.6 keychain, removes the login-keychain copies kept for rollback
