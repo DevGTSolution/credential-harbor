@@ -190,6 +190,7 @@ Start with `harbor doctor`: it says which of these it is.
 | container: connection refused | Settings → Containers is off | turn it on |
 | container: key path is a directory | Docker created it before the key file existed | delete it, **Write key file**, recreate the container |
 | "Move N credentials to Harbor's new keychain" | you switched to a Developer ID build | click **Move now** and allow each macOS prompt once |
+| "N old login-keychain copies left from before 1.6" | rollback copies kept after **Move now** | once 1.6 works for you, click **Remove old copies** |
 | Harbor doesn't start at login after an update | the app's bundle ID changed | turn **Launch at login** on again in Settings |
 
 ## 10. Developer ID setup (paid account)

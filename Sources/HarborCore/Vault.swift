@@ -65,14 +65,29 @@ public enum Vault {
             && alias.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) && $0.isASCII || $0 == "-" || $0 == "_" }
     }
 
-    /// Harbor's copies in both stores; a data-protection copy wins over a leftover login-keychain one.
+    /// Harbor's copies in both stores; a data-protection copy wins over a leftover login-keychain one,
+    /// and a synced copy over a local one (a Mac can hold both when a synced copy arrives later).
     public static func entries(interactive: Bool = true) throws -> [VaultEntry] {
         var byAlias: [String: VaultEntry] = [:]
         for entry in try legacyEntries(interactive: interactive) { byAlias[entry.alias] = entry }
         if modern {
-            for entry in try parse(attributes(dp(listQuery), "list")) { byAlias[entry.alias] = entry }
+            for entry in try parse(attributes(dp(listQuery), "list")).sorted(by: { !$0.synced && $1.synced }) { byAlias[entry.alias] = entry }
         }
         return byAlias.values.sorted { $0.alias < $1.alias }
+    }
+
+    /// Login-keychain copies left from before 1.6 whose credential already has a data-protection copy.
+    public static func leftovers() throws -> [String] {
+        guard modern else { return [] }
+        let moved = Set(try parse(attributes(dp(listQuery), "list")).map(\.alias))
+        return try legacyEntries(interactive: true).map(\.alias).filter(moved.contains)
+    }
+
+    /// Owner-only. Deletes only leftovers, never a credential's last copy.
+    public static func removeLeftovers() throws -> Int {
+        let aliases = try leftovers()
+        for alias in aliases { try removeLegacy(alias) }
+        return aliases.count
     }
 
     /// Approved credentials whose only copy is still in the login keychain.
@@ -109,11 +124,14 @@ public enum Vault {
     public static func secret(_ alias: String, interactive: Bool = true) throws -> String {
         guard isValidAlias(alias) else { throw HarborError.invalidAlias(alias) }
         if modern {
-            var result: CFTypeRef?
-            let status = SecItemCopyMatching(dp([kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: alias,
-                                                 kSecMatchLimit: kSecMatchLimitOne, kSecReturnData: true]) as CFDictionary, &result)
-            if status == errSecSuccess, let data = result as? Data { return String(decoding: data, as: UTF8.self) }
-            guard status == errSecItemNotFound else { throw HarborError.keychain(status, "read of \(alias)") }
+            for synced in [true, false] { // the synced copy first, matching entries()
+                var result: CFTypeRef?
+                let status = SecItemCopyMatching([kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: alias,
+                                                  kSecUseDataProtectionKeychain: true, kSecAttrSynchronizable: synced,
+                                                  kSecMatchLimit: kSecMatchLimitOne, kSecReturnData: true] as CFDictionary, &result)
+                if status == errSecSuccess, let data = result as? Data { return String(decoding: data, as: UTF8.self) }
+                guard status == errSecItemNotFound else { throw HarborError.keychain(status, "read of \(alias)") }
+            }
         }
         return try legacySecret(alias, interactive: interactive)
     }

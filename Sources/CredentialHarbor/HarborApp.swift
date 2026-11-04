@@ -169,6 +169,7 @@ final class Model: ObservableObject {
     @Published var approved: [VaultEntry] = []
     @Published var candidates: [Candidate] = []
     @Published var unmigrated: [VaultEntry] = []
+    @Published var leftovers: [String] = []
     @Published var migrating = false
     @Published var section: Section = .credentials
     @Published var selectedCredential: String?
@@ -204,6 +205,7 @@ final class Model: ObservableObject {
             let names = Set(approved.map(\.alias))
             candidates = try Vault.candidates().filter { !names.contains($0.alias) }
             unmigrated = try Vault.unmigrated()
+            leftovers = try Vault.leftovers()
         } catch { banner = "\(error)" }
         if selectedCredential == nil { selectedCredential = approved.first?.alias }
         if selectedAgent == nil { selectedAgent = config.agents.first?.id }
@@ -264,6 +266,14 @@ final class Model: ObservableObject {
                 self.reload()
             }
         }
+    }
+
+    func removeLeftovers() {
+        do {
+            let count = try Vault.removeLeftovers()
+            banner = "Removed \(count) old login-keychain cop\(count == 1 ? "y" : "ies"). Your credentials are unchanged."
+        } catch { banner = "\(error)" }
+        reload()
     }
 
     func setSynced(_ entry: VaultEntry, _ on: Bool) {
@@ -718,6 +728,12 @@ func ago(_ date: Date?) -> String {
 
 struct CredentialsView: View {
     @EnvironmentObject var model: Model
+    @State private var search = ""
+    @State private var confirmLeftovers = false
+
+    private func matches(_ fields: String...) -> Bool {
+        search.isEmpty || fields.contains { $0.localizedCaseInsensitiveContains(search) }
+    }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -729,6 +745,9 @@ struct CredentialsView: View {
                         Button { model.addingCredential = true } label: { Label("Add", systemImage: "plus").fixedSize() }.buttonStyle(GoldButton())
                     }
                 }
+                TextField("Search credentials", text: $search)
+                    .textFieldStyle(.roundedBorder)
+                    .padding(.horizontal, 16).padding(.bottom, 8)
                 ScrollView {
                     VStack(spacing: 8) {
                         if !model.unmigrated.isEmpty {
@@ -741,16 +760,29 @@ struct CredentialsView: View {
                             .padding(12).frame(maxWidth: .infinity, alignment: .leading)
                             .background(Theme.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
                         }
+                        if model.unmigrated.isEmpty && !model.leftovers.isEmpty && search.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("\(model.leftovers.count) old login-keychain cop\(model.leftovers.count == 1 ? "y" : "ies") left from before 1.6").font(.callout.weight(.semibold))
+                                Text("Kept for rolling back. Every credential already has its new copy, so these are only extra copies an older Harbor build could read.")
+                                    .font(.caption).foregroundStyle(Theme.muted)
+                                Button("Remove old copies") { confirmLeftovers = true }.buttonStyle(GoldButton())
+                            }
+                            .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Theme.bg2, in: RoundedRectangle(cornerRadius: 12))
+                        }
                         if model.approved.isEmpty { Text("Nothing approved yet.").foregroundStyle(Theme.muted).padding() }
-                        ForEach(model.approved) { entry in CredentialCard(entry: entry) }
-                        if !model.candidates.isEmpty {
+                        let shown = model.approved.filter { matches($0.alias, $0.username, model.meta($0.alias).note) }
+                        if !model.approved.isEmpty && shown.isEmpty { Text("No credentials match “\(search)”.").foregroundStyle(Theme.muted).padding() }
+                        ForEach(shown) { entry in CredentialCard(entry: entry) }
+                        let found = model.candidates.filter { matches($0.alias, $0.username, $0.source) }
+                        if !found.isEmpty {
                             HStack {
                                 Text("FOUND IN YOUR KEYCHAIN").font(.caption.weight(.bold)).foregroundStyle(Theme.muted)
                                 Spacer()
                                 Button("Rescan") { model.reload() }.buttonStyle(.plain).font(.caption).foregroundStyle(Theme.accent)
                             }
                             .padding(.top, 14)
-                            ForEach(model.candidates) { item in CandidateRow(item: item) }
+                            ForEach(found) { item in CandidateRow(item: item) }
                         }
                     }
                     .padding(.horizontal, 16).padding(.bottom, 16)
@@ -763,6 +795,9 @@ struct CredentialsView: View {
             } else {
                 Placeholder(icon: "key.horizontal", text: "Select a credential, or add one.\nName Keychain items AI-Something to have them show up here.")
             }
+        }
+        .confirmationDialog("Remove \(model.leftovers.count) old login-keychain copies? Rolling back to Harbor 1.5 would then need the secrets entered again.", isPresented: $confirmLeftovers) {
+            Button("Remove", role: .destructive) { model.removeLeftovers() }
         }
     }
 }

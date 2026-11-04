@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.6.1
+* **Search** on the Credentials page: filters by name, username and note (and Keychain items found by Scan).
+* **Remove old copies:** after moving to the 1.6 keychain, removes the login-keychain copies kept for rollback
+  (only ones whose credential already has its new copy).
+* When a Mac holds both a synced and a local copy of a credential, Harbor uses the synced one everywhere.
+
 ## 1.6.0
 * **iCloud Keychain sync, per credential** (Developer ID builds): a **Sync with iCloud Keychain** switch on each
   credential. Only builds signed by your team can read synced copies.
