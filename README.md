@@ -46,6 +46,9 @@ harbor run --env TF_VAR_client_secret='{{AI-CloudAPI}}' -- terraform plan
   change before applying it. Passwords and agent keys never leave the Mac they're on
   ([what's in the file](docs/guide.md#8-move-to-another-mac)).
 
+* **Sync secrets through iCloud Keychain** (Developer ID builds). Turn it on per credential, and it reaches
+  your other Macs on the same Apple Account that run your Harbor. Only builds signed by your team can read it.
+
 Permissions last until you revoke them: no timers, and no prompt per command.
 
 **New here?** The [how-to guide](docs/guide.md) walks through install, agents, scheduled jobs, Docker, moving to another Mac and troubleshooting.
@@ -65,11 +68,17 @@ On first launch the app installs the CLI to `/Users/Shared/CredentialHarbor/bin/
 build links it to `~/.local/bin/harbor`. Turn on **Settings → Launch at login**, because `harbor`
 only works while the app is running.
 
-**Signing matters.** macOS remembers "Always Allow" for Keychain access per Team ID. If you have
-an *Apple Development* certificate (free with any Apple ID: Xcode → Settings → Accounts → Manage
-Certificates → +), `build-app.sh` signs with it, and rebuilds keep access. Otherwise the app is signed
-ad hoc, and macOS asks again for each credential after every rebuild. If the certificate shows as
-invalid, install Apple's [WWDR G3 intermediate](https://www.apple.com/certificateauthority/).
+**Signing matters.** `build-app.sh` picks the best signing you have:
+
+| You have | Harbor's copies live in | Prompts | iCloud sync | Install on other Macs |
+|---|---|---|---|---|
+| Nothing | login keychain | once per credential after **every** rebuild | no | no |
+| *Apple Development* certificate (free with any Apple ID: Xcode → Settings → Accounts → Manage Certificates → +) | login keychain | once per credential; again if the certificate is renewed | no | over ssh only (`deploy-mac.sh`) |
+| Paid [Apple Developer Program](https://developer.apple.com/programs/) + a Developer ID profile in `signing/` | data-protection keychain, readable only by apps signed by your team | none | yes, per credential | anywhere, once notarized (`--notarize`) |
+
+A free account covers everything except iCloud Keychain sync and notarized installs. To set up the paid
+route, see the guide's [Developer ID setup](docs/guide.md#10-developer-id-setup-paid-account). If a
+certificate shows as invalid, install Apple's [WWDR G3 intermediate](https://www.apple.com/certificateauthority/).
 
 ## Set up an agent
 

@@ -50,7 +50,7 @@ func session() -> LineChannel {
     if let fd = Wire.connect() { return LineChannel(fd) }
     if getuid() == directoryOwner() {
         // The owner's own call can start the app; other users must wait for the owner's session.
-        _ = try? Process.run(URL(fileURLWithPath: "/usr/bin/open"), arguments: ["-gj", "-b", "local.credentialharbor"])
+        _ = try? Process.run(URL(fileURLWithPath: "/usr/bin/open"), arguments: ["-gj", "-a", "Credential Harbor"]) // by name: the bundle ID depends on how it was signed
         for _ in 0..<20 { usleep(500_000); if let fd = Wire.connect() { return LineChannel(fd) } }
     }
     fail(Wire.explain(errno) + " Run `harbor doctor` for details.", 69)

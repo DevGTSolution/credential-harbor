@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 1.6.0
+* **iCloud Keychain sync, per credential** (Developer ID builds): a **Sync with iCloud Keychain** switch on each
+  credential. Only builds signed by your team can read synced copies.
+* Developer ID builds keep Harbor's copies in the data-protection keychain: no more Keychain prompts, even after
+  rebuilds or certificate renewals. **Move now** moves existing credentials once (old copies kept for rollback).
+* `build-app.sh` signs Developer ID with the hardened runtime when `signing/` has a profile; `--notarize` notarizes.
+  Free-account builds work as before.
 * `deploy-mac.sh [user@]host …` installs the signed build on other Macs over ssh, refusing builds not signed by your team.
 
 ## 1.5.0

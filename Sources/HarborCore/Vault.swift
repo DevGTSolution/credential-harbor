@@ -1,14 +1,16 @@
 import Foundation
 import Security
 
-/// A credential the owner approved for AI use. Approval == a Harbor-owned copy
-/// exists in the login keychain (service "CredentialHarbor", account = alias).
-/// Harbor creates that item, so its ACL trusts only this signed binary; any
-/// other tool reading it gets a macOS prompt. Revoke == delete the copy.
+/// A credential the owner approved for AI use. Approval == a Harbor-owned copy exists
+/// (service "CredentialHarbor", account = alias). Developer ID builds keep it in the
+/// data-protection keychain, readable only by apps signed with Harbor's team and access group,
+/// optionally synced through iCloud Keychain. Other builds keep it in the login keychain, whose
+/// ACL trusts only this signed binary. Revoke == delete the copy.
 public struct VaultEntry: Identifiable, Hashable, Sendable {
     public var id: String { alias }
     public let alias: String
     public let username: String
+    public var synced = false
 }
 
 /// An `AI-` item found in the keychain that is not approved yet.
@@ -46,23 +48,77 @@ public enum Vault {
     /// an owner-facing read never runs while a background read has dialogs turned off.
     private static let interaction = NSLock()
 
+    /// The data-protection keychain needs a keychain-access-groups entitlement, which only a build
+    /// with its provisioning profile has (without one, writes fail -34018 and reads find nothing).
+    /// Otherwise Harbor stays on the login keychain.
+    public static let modern: Bool = {
+        guard let task = SecTaskCreateFromSelf(nil) else { return false }
+        return SecTaskCopyValueForEntitlement(task, "keychain-access-groups" as CFString, nil) != nil
+    }()
+
+    private static func dp(_ query: [CFString: Any]) -> [CFString: Any] {
+        query.merging([kSecUseDataProtectionKeychain: true, kSecAttrSynchronizable: kSecAttrSynchronizableAny]) { $1 }
+    }
+
     public static func isValidAlias(_ alias: String) -> Bool {
         alias.hasPrefix("AI-") && alias.count > 3 && alias.count <= 100
             && alias.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) && $0.isASCII || $0 == "-" || $0 == "_" }
     }
 
+    /// Harbor's copies in both stores; a data-protection copy wins over a leftover login-keychain one.
     public static func entries(interactive: Bool = true) throws -> [VaultEntry] {
-        let query: [CFString: Any] = [kSecClass: kSecClassGenericPassword, kSecAttrService: service,
-                                      kSecMatchLimit: kSecMatchLimitAll, kSecReturnAttributes: true]
-        let items = interactive ? try attributes(query, "list") : try withoutDialogs { try attributes(query, "list") }
-        return items.compactMap { item in
+        var byAlias: [String: VaultEntry] = [:]
+        for entry in try legacyEntries(interactive: interactive) { byAlias[entry.alias] = entry }
+        if modern {
+            for entry in try parse(attributes(dp(listQuery), "list")) { byAlias[entry.alias] = entry }
+        }
+        return byAlias.values.sorted { $0.alias < $1.alias }
+    }
+
+    /// Approved credentials whose only copy is still in the login keychain.
+    public static func unmigrated() throws -> [VaultEntry] {
+        guard modern else { return [] }
+        let moved = Set(try parse(attributes(dp(listQuery), "list")).map(\.alias))
+        return try legacyEntries(interactive: true).filter { !moved.contains($0.alias) }
+    }
+
+    /// Owner-only, one at a time: reading a login-keychain copy written by an older build makes
+    /// macOS ask once. The old copy stays, as a backup for rolling back, until revoke or replace.
+    public static func migrate(_ entry: VaultEntry) throws {
+        let secret = try legacySecret(entry.alias, interactive: true)
+        try add(alias: entry.alias, username: entry.username, secret: secret, synced: false)
+    }
+
+    private static let listQuery: [CFString: Any] = [kSecClass: kSecClassGenericPassword, kSecAttrService: service,
+                                                     kSecMatchLimit: kSecMatchLimitAll, kSecReturnAttributes: true]
+
+    private static func legacyEntries(interactive: Bool) throws -> [VaultEntry] {
+        if interactive { return try parse(attributes(listQuery, "list")) }
+        do { return try withoutDialogs { try parse(attributes(listQuery, "list")) } }
+        catch HarborError.needsOwner(_) where modern { return [] } // locked login keychain; data-protection copies still serve
+    }
+
+    private static func parse(_ items: [[String: Any]]) -> [VaultEntry] {
+        items.compactMap { item in
             guard let alias = item[kSecAttrAccount as String] as? String, isValidAlias(alias) else { return nil }
-            return VaultEntry(alias: alias, username: item[kSecAttrComment as String] as? String ?? "")
-        }.sorted { $0.alias < $1.alias }
+            return VaultEntry(alias: alias, username: item[kSecAttrComment as String] as? String ?? "",
+                              synced: "\(item[kSecAttrSynchronizable as String] ?? 0)" == "1")
+        }
     }
 
     public static func secret(_ alias: String, interactive: Bool = true) throws -> String {
         guard isValidAlias(alias) else { throw HarborError.invalidAlias(alias) }
+        if modern {
+            var result: CFTypeRef?
+            let status = SecItemCopyMatching(dp([kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: alias,
+                                                 kSecMatchLimit: kSecMatchLimitOne, kSecReturnData: true]) as CFDictionary, &result)
+            if status == errSecSuccess, let data = result as? Data { return String(decoding: data, as: UTF8.self) }
+            guard status == errSecItemNotFound else { throw HarborError.keychain(status, "read of \(alias)") }
+        }
+        return try legacySecret(alias, interactive: interactive)
+    }
+
+    private static func legacySecret(_ alias: String, interactive: Bool) throws -> String {
         let query: [CFString: Any] = [kSecClass: kSecClassGenericPassword, kSecAttrService: service,
                                       kSecAttrAccount: alias, kSecMatchLimit: kSecMatchLimitOne, kSecReturnData: true]
         var result: CFTypeRef?
@@ -81,10 +137,18 @@ public enum Vault {
         return entry.username
     }
 
-    /// Owner-only (called from the GUI). Replaces any existing item so the ACL is ours.
-    public static func save(alias: String, username: String, secret: String) throws {
+    /// Owner-only (called from the GUI). Replaces any existing copy, in either store, with a fresh one.
+    /// `synced` puts it in iCloud Keychain, so it reaches every Mac on this Apple Account that runs
+    /// this team's Harbor; only those builds can read it.
+    public static func save(alias: String, username: String, secret: String, synced: Bool = false) throws {
         guard isValidAlias(alias) else { throw HarborError.invalidAlias(alias) }
-        try remove(alias)
+        guard modern || !synced else { throw HarborError.usage("iCloud Keychain sync needs a Developer ID build of Harbor.") }
+        if modern {
+            try add(alias: alias, username: username, secret: secret, synced: synced)
+            try removeLegacy(alias)
+            return
+        }
+        try removeLegacy(alias)
         let item: [CFString: Any] = [kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: alias,
                                      kSecAttrLabel: "Credential Harbor: \(alias)", kSecAttrComment: username,
                                      kSecValueData: Data(secret.utf8)]
@@ -92,7 +156,31 @@ public enum Vault {
         guard status == errSecSuccess else { throw HarborError.keychain(status, "save of \(alias)") }
     }
 
+    /// Data-protection copy, replacing any synced or local one. Readable after first unlock so
+    /// background agents keep working while the screen is locked.
+    private static func add(alias: String, username: String, secret: String, synced: Bool) throws {
+        try removeModern(alias)
+        let item: [CFString: Any] = [kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: alias,
+                                     kSecAttrLabel: "Credential Harbor: \(alias)", kSecAttrComment: username,
+                                     kSecUseDataProtectionKeychain: true, kSecAttrSynchronizable: synced,
+                                     kSecAttrAccessible: synced ? kSecAttrAccessibleAfterFirstUnlock : kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+                                     kSecValueData: Data(secret.utf8)]
+        let status = SecItemAdd(item as CFDictionary, nil)
+        guard status == errSecSuccess else { throw HarborError.keychain(status, "save of \(alias)") }
+    }
+
+    /// Deletes every copy. A synced copy is deleted on every Mac on this Apple Account.
     public static func remove(_ alias: String) throws {
+        if modern { try removeModern(alias) }
+        try removeLegacy(alias)
+    }
+
+    private static func removeModern(_ alias: String) throws {
+        let status = SecItemDelete(dp([kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: alias]) as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else { throw HarborError.keychain(status, "removal of \(alias)") }
+    }
+
+    private static func removeLegacy(_ alias: String) throws {
         let query: [CFString: Any] = [kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: alias]
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else { throw HarborError.keychain(status, "removal of \(alias)") }

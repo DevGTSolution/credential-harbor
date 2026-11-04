@@ -168,6 +168,8 @@ final class Model: ObservableObject {
     @Published var events: [Event] = []
     @Published var approved: [VaultEntry] = []
     @Published var candidates: [Candidate] = []
+    @Published var unmigrated: [VaultEntry] = []
+    @Published var migrating = false
     @Published var section: Section = .credentials
     @Published var selectedCredential: String?
     @Published var selectedAgent: UUID?
@@ -201,6 +203,7 @@ final class Model: ObservableObject {
             approved = try Vault.entries()
             let names = Set(approved.map(\.alias))
             candidates = try Vault.candidates().filter { !names.contains($0.alias) }
+            unmigrated = try Vault.unmigrated()
         } catch { banner = "\(error)" }
         if selectedCredential == nil { selectedCredential = approved.first?.alias }
         if selectedAgent == nil { selectedAgent = config.agents.first?.id }
@@ -243,6 +246,34 @@ final class Model: ObservableObject {
         }
     }
 
+    /// One macOS prompt per credential (this build isn't on the old copies' access list), then never again.
+    func migrateAll() {
+        guard !migrating else { return }
+        migrating = true
+        let items = unmigrated
+        Task.detached {
+            var failed: [String] = []
+            for (index, entry) in items.enumerated() {
+                await MainActor.run { self.banner = "Moving \(entry.alias) (\(index + 1) of \(items.count))… allow it in the macOS dialog." }
+                do { try Vault.migrate(entry) } catch { failed.append("\(entry.alias): \(error)") }
+            }
+            let failures = failed
+            await MainActor.run {
+                self.migrating = false
+                self.banner = failures.isEmpty ? "Moved \(items.count) credential\(items.count == 1 ? "" : "s"). macOS won't ask again." : "Not moved: \(failures.joined(separator: "; "))"
+                self.reload()
+            }
+        }
+    }
+
+    func setSynced(_ entry: VaultEntry, _ on: Bool) {
+        do {
+            try Vault.save(alias: entry.alias, username: entry.username, secret: try Vault.secret(entry.alias), synced: on)
+            banner = on ? "\(entry.alias) now syncs through iCloud Keychain to your other Macs running Harbor." : "\(entry.alias) is on this Mac only now. Other Macs lose their synced copy."
+        } catch { banner = "\(error)" }
+        reload()
+    }
+
     func add(alias: String, username: String, note: String, secret: String) {
         do {
             try Vault.save(alias: alias, username: username, secret: secret)
@@ -256,7 +287,7 @@ final class Model: ObservableObject {
     /// Rotation: same name, username, note and agent ticks; only the secret changes.
     func replaceSecret(_ entry: VaultEntry, _ secret: String) {
         do {
-            try Vault.save(alias: entry.alias, username: entry.username, secret: secret)
+            try Vault.save(alias: entry.alias, username: entry.username, secret: secret, synced: entry.synced)
             update { $0.credentials[entry.alias, default: CredentialMeta()].replaced = Date() }
             banner = "Replaced \(entry.alias)'s secret. Agents keep access and get the new one on their next request."
         } catch { banner = "\(error)" }
@@ -700,6 +731,16 @@ struct CredentialsView: View {
                 }
                 ScrollView {
                     VStack(spacing: 8) {
+                        if !model.unmigrated.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Move \(model.unmigrated.count) credential\(model.unmigrated.count == 1 ? "" : "s") to Harbor's new keychain").font(.callout.weight(.semibold))
+                                Text("This build is signed differently, so macOS asks once for each, then never again (even after updates). Until then they still work, with a prompt.")
+                                    .font(.caption).foregroundStyle(Theme.muted)
+                                Button(model.migrating ? "Moving…" : "Move now") { model.migrateAll() }.buttonStyle(GoldButton()).disabled(model.migrating)
+                            }
+                            .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Theme.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+                        }
                         if model.approved.isEmpty { Text("Nothing approved yet.").foregroundStyle(Theme.muted).padding() }
                         ForEach(model.approved) { entry in CredentialCard(entry: entry) }
                         if !model.candidates.isEmpty {
@@ -746,7 +787,11 @@ struct CredentialCard: View {
                 Spacer()
                 VStack(alignment: .trailing, spacing: 4) {
                     Dot(color: meta.health.map { $0.ok ? Theme.good : Theme.danger } ?? Theme.muted.opacity(0.5))
-                    Text("\(users) agent\(users == 1 ? "" : "s")").font(.caption2).foregroundStyle(Theme.muted)
+                    HStack(spacing: 4) {
+                        if entry.synced { Image(systemName: "icloud").help("Syncs through iCloud Keychain") }
+                        Text("\(users) agent\(users == 1 ? "" : "s")")
+                    }
+                    .font(.caption2).foregroundStyle(Theme.muted)
                 }
             }
             .padding(12)
@@ -842,6 +887,13 @@ struct CredentialDetail: View {
                     }
                 }
 
+                if Vault.modern {
+                    Card(title: "iCloud Keychain", subtitle: "Syncs the secret to your other Macs on this Apple Account that run Harbor; only Harbor can read it. Agent access stays per Mac. Replacing or revoking it changes every Mac.") {
+                        Toggle("Sync with iCloud Keychain", isOn: Binding(get: { entry.synced }, set: { model.setSynced(entry, $0) }))
+                            .toggleStyle(RightSwitch())
+                    }
+                }
+
                 Card(title: "Replace secret", subtitle: "Rotate an API key or update a changed password. The name, note and agent access stay the same.") {
                     SecureField("New secret", text: $newSecret, prompt: Text("new password, API key or token"))
                         .textFieldStyle(.roundedBorder)
@@ -853,7 +905,7 @@ struct CredentialDetail: View {
                     }
                 }
 
-                Card(title: "Revoke", subtitle: "Removes Harbor's copy. Every agent loses access immediately; the original Keychain item stays.") {
+                Card(title: "Revoke", subtitle: entry.synced ? "Removes Harbor's copy here and on every Mac it syncs to. Every agent loses access immediately; the original Keychain item stays." : "Removes Harbor's copy. Every agent loses access immediately; the original Keychain item stays.") {
                     Button("Revoke \(entry.alias)") { confirmRevoke = true }.buttonStyle(GoldButton(destructive: true))
                 }
             }

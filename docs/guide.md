@@ -12,6 +12,7 @@ that section before granting anything you care about.
 * [7. Day-to-day: rotate, pause, revoke](#7-day-to-day-rotate-pause-revoke)
 * [8. Move to another Mac](#8-move-to-another-mac)
 * [9. Troubleshooting](#9-troubleshooting)
+* [10. Developer ID setup (paid account)](#10-developer-id-setup-paid-account)
 
 ## 1. Install
 
@@ -149,6 +150,7 @@ they're on, so each Mac still approves its own credentials and makes its own key
 3. Harbor lists every change before applying it, access changes first ("Claude may now use AI-Server",
    new linked apps, an agent unpaused, Containers turning on). Click **Import** or **Cancel**.
 4. Add or approve the credentials on the new Mac, then **Generate key** for each agent and give it to the agent.
+   With a Developer ID build, credentials you set to **Sync with iCloud Keychain** arrive on their own.
 
 **What the file holds**
 
@@ -168,6 +170,12 @@ The file isn't secret, but it shows which credentials exist, who may use them, a
 isn't end-to-end encrypted unless Advanced Data Protection is on, so keep secrets out of notes (they never
 belong there anyway).
 
+**Syncing secrets (Developer ID builds only).** On a credential's page, turn on **Sync with iCloud Keychain**.
+The secret syncs to every Mac on your Apple Account that runs a Harbor signed by your team; no other app can
+read it. Agent access still comes from each Mac's own settings. Replacing or revoking a synced credential
+changes it on every Mac. Passwords you keep in Apple's Passwords app can't be read by Harbor (Apple keeps those
+from other apps), so add them to Harbor once and sync them from there.
+
 ## 9. Troubleshooting
 
 Start with `harbor doctor`: it says which of these it is.
@@ -181,3 +189,26 @@ Start with `harbor doctor`: it says which of these it is.
 | macOS asks for Keychain access after every rebuild | app signed ad hoc | sign with an Apple Development certificate |
 | container: connection refused | Settings → Containers is off | turn it on |
 | container: key path is a directory | Docker created it before the key file existed | delete it, **Write key file**, recreate the container |
+| "Move N credentials to Harbor's new keychain" | you switched to a Developer ID build | click **Move now** and allow each macOS prompt once |
+| Harbor doesn't start at login after an update | the app's bundle ID changed | turn **Launch at login** on again in Settings |
+
+## 10. Developer ID setup (paid account)
+
+Only needed for iCloud Keychain sync and notarized installs. Everything else works with a free Apple ID.
+
+1. Join the [Apple Developer Program](https://developer.apple.com/programs/). In Xcode → Settings → Accounts
+   your team should then show without "(Personal Team)".
+2. **Certificate:** Xcode → Settings → Accounts → **Manage Certificates… → + → Developer ID Application**.
+   If Xcode won't create it, make it at developer.apple.com → Certificates and double-click the download.
+3. **App ID:** developer.apple.com → Identifiers → **+** → App IDs → App, explicit bundle ID such as
+   `com.example.credentialharbor`. No capabilities needed: keychain sharing within your team comes with it.
+4. **Profile:** Profiles → **+** → Distribution → **Developer ID**, pick that App ID and certificate, download it,
+   and save it as `signing/<anything>.provisionprofile` in this folder (`signing/` is git-ignored).
+5. `zsh build-app.sh --install`. The first build asks to let codesign use the new key: choose **Always Allow**.
+6. Open Harbor, click **Move now** on the Credentials page, and allow each prompt once. Turn **Launch at login**
+   back on (the bundle ID changed).
+7. Optional, to notarize: create an app-specific password at account.apple.com, run
+   `xcrun notarytool store-credentials harbor-notary --apple-id <you> --team-id <team>`, then build with
+   `--notarize`.
+
+The app's identity is your team, not one certificate, so renewing the certificate never prompts again.

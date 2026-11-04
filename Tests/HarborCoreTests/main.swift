@@ -93,4 +93,7 @@ check(lines.contains("Claude may now use AI-B") && lines.contains("Claude gets l
       && lines.contains("Claude is unpaused") && lines.contains { $0.hasPrefix("New agent Bot") }
       && lines.contains { $0.hasPrefix("Containers (Docker) turns on") }, "settings file: access changes listed")
 check(here.changes(importing: here).isEmpty, "settings file: same settings, no changes")
+// Unentitled (no provisioning profile): login keychain only, and sync is refused before any keychain write.
+check(!Vault.modern, "vault: unentitled build stays on the login keychain")
+check(refused { try Vault.save(alias: "AI-SyncProbe", username: "", secret: "x", synced: true) }, "vault: sync refused without Developer ID")
 print("PASS")
