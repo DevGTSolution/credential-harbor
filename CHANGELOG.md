@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.6.3
+* **Saving a credential updates it in place.** Add and Replace now update the existing Keychain item and only add a
+  new one when none exists. A failed update is reported and never falls back to deleting the existing item; if
+  another writer creates the item at the same moment, the update is retried once.
+* New `VaultWriteTests` (run with `swift test`) cover the write path with injected Keychain calls, so they never
+  touch a real keychain.
+
 ## 1.6.2 (important fix: update now if you use a Developer ID build)
 * **Fixes data loss in Developer ID builds of 1.6.0 and 1.6.1.** In an entitled build, a keychain query that
   doesn't name a keychain matches both the login and the data-protection keychain. So **Remove old copies**

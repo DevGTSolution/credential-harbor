@@ -173,24 +173,29 @@ public enum Vault {
             try removeLegacy(alias)
             return
         }
-        try removeLegacy(alias)
-        let item: [CFString: Any] = [kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: alias,
-                                     kSecAttrLabel: "Credential Harbor: \(alias)", kSecAttrComment: username,
-                                     kSecValueData: Data(secret.utf8), kSecUseDataProtectionKeychain: false]
-        let status = SecItemAdd(item as CFDictionary, nil)
-        guard status == errSecSuccess else { throw HarborError.keychain(status, "save of \(alias)") }
+        try writeCopy(alias: alias, username: username, secret: secret, synced: false, dataProtection: false)
     }
 
-    /// Data-protection copy, replacing any synced or local one. Readable after first unlock so
+    /// Data-protection copy, updating any synced or local one. Readable after first unlock so
     /// background agents keep working while the screen is locked.
     private static func add(alias: String, username: String, secret: String, synced: Bool) throws {
-        try removeModern(alias)
-        let item: [CFString: Any] = [kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: alias,
-                                     kSecAttrLabel: "Credential Harbor: \(alias)", kSecAttrComment: username,
-                                     kSecUseDataProtectionKeychain: true, kSecAttrSynchronizable: synced,
-                                     kSecAttrAccessible: synced ? kSecAttrAccessibleAfterFirstUnlock : kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-                                     kSecValueData: Data(secret.utf8)]
-        let status = SecItemAdd(item as CFDictionary, nil)
+        try writeCopy(alias: alias, username: username, secret: secret, synced: synced, dataProtection: true)
+    }
+
+    // Keep the real query construction testable without accessing an owner's keychain.
+    static func writeCopy(alias: String, username: String, secret: String, synced: Bool, dataProtection: Bool,
+                          save: ([CFString: Any], [CFString: Any]) -> OSStatus = {
+                              KeychainWrite.save(query: $0, attributes: $1)
+                          }) throws {
+        let identity: [CFString: Any] = [kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: alias]
+        let query = dataProtection ? dp(identity) : identity.merging(fileOnly) { $1 }
+        var attributes: [CFString: Any] = [kSecAttrLabel: "Credential Harbor: \(alias)", kSecAttrComment: username,
+                                          kSecValueData: Data(secret.utf8)]
+        if dataProtection {
+            attributes[kSecAttrSynchronizable] = synced
+            attributes[kSecAttrAccessible] = synced ? kSecAttrAccessibleAfterFirstUnlock : kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        }
+        let status = save(query, attributes)
         guard status == errSecSuccess else { throw HarborError.keychain(status, "save of \(alias)") }
     }
 

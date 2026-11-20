@@ -6,6 +6,7 @@ let package = Package(
     products: [.executable(name: "CredentialHarbor", targets: ["CredentialHarbor"]), .executable(name: "harbor", targets: ["harbor"])],
     targets: [
         .target(name: "HarborCore"),
+        .testTarget(name: "VaultWriteTests", dependencies: ["HarborCore"]),
         .executableTarget(name: "CredentialHarbor", dependencies: ["HarborCore"]),
         .executableTarget(name: "harbor", dependencies: ["HarborCore"]),
         .executableTarget(name: "HarborChecks", dependencies: ["HarborCore"], path: "Tests/HarborCoreTests"),
