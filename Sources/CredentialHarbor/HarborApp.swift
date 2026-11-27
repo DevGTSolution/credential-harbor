@@ -1130,7 +1130,7 @@ struct AgentDetail: View {
                 }
 
                 Card(title: "Recent activity") {
-                    let mine = model.events.filter { $0.agentID == agent.id } // by ID: a new agent with a reused name starts clean.suffix(5).reversed()
+                    let mine = model.events.filter { $0.agentID == agent.id }.suffix(5).reversed() // by ID: a new agent with a reused name starts clean
                     if mine.isEmpty { Text("Nothing yet.").foregroundStyle(Theme.muted) }
                     ForEach(Array(mine)) { EventRow(event: $0, compact: true) }
                 }

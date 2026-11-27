@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.6.4
+* **Fixes a freeze on the Agents page.** An agent's *Recent activity* card drew every event that agent had
+  (up to 10,000) instead of the last 5, and redrew them on every broker request, so a busy agent hung the app.
+
 ## 1.6.3
 * **Saving a credential updates it in place.** Add and Replace now update the existing Keychain item and only add a
   new one when none exists. A failed update is reported and never falls back to deleting the existing item; if

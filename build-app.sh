@@ -50,8 +50,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <key>CFBundleDisplayName</key><string>Credential Harbor</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>1.6.3</string>
-<key>CFBundleVersion</key><string>163</string>
+<key>CFBundleShortVersionString</key><string>1.6.4</string>
+<key>CFBundleVersion</key><string>164</string>
 <key>LSMinimumSystemVersion</key><string>15.0</string>
 <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
